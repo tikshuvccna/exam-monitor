@@ -539,13 +539,17 @@ wss.on('connection', (ws, req) => {
       if (id && students[id]) {
         students[id].resolution = msg.resolution;
         students[id].lastSeen   = Date.now();
-        sendToAdmin({ type: 'resolution', id, resolution: msg.resolution });
+        students[id].mode = msg.mode || 'screen';
+        sendToAdmin({ type: 'resolution', id, resolution: msg.resolution, mode: students[id].mode });
         const sname = students[id].name;
         if (persistentStudents[sname]) {
           persistentStudents[sname].resolution = msg.resolution;
           saveStudentFile();
         }
-        if (msg.surfaceType && msg.surfaceType !== 'monitor') {
+        if (msg.mode === 'camera') {
+          addLog('info', `📷 ${sname} משתף ממצלמת טלפון`);
+          recordStudentEvent(sname, 'שיתוף ממצלמת טלפון');
+        } else if (msg.surfaceType && msg.surfaceType !== 'monitor') {
           addLog('warning', `⚠️ ${sname} משתף רק חלק מהמסך (סוג: ${msg.surfaceType})`);
           recordStudentEvent(sname, `שיתוף חלקי - סוג: ${msg.surfaceType}`);
           sendToAdmin({ type: 'alert', message: `${sname} משתף חלון או כרטיסיה בלבד!` });

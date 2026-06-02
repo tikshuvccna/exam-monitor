@@ -115,6 +115,11 @@ let kicked = false;
 let screenshotInterval = null;
 let pingInterval = null;
 
+// זיהוי מכשיר נייד - בטלפונים אין שיתוף מסך, נופלים למצב מצלמה
+const isMobile = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent)
+  || !navigator.mediaDevices?.getDisplayMedia;
+let shareMode = isMobile ? 'camera' : 'screen';
+
 fetch('/turn-config').then(r => r.json()).then(cfg => {
   const turnUrl = `turn:${location.hostname}:${cfg.port}`;
   iceServers = [
@@ -146,8 +151,21 @@ window.addEventListener('load', async () => {
   document.getElementById('nameInput').addEventListener('keydown', e => { if (e.key === 'Enter') joinExam(); });
 
   agentPresent = await detectAgent();
-  if (!agentPresent) showAgentPrompt();   // מציג כפתור הורדה אם האפליקציה לא מותקנת
+  if (!agentPresent && !isMobile) showAgentPrompt();   // אפליקציית הפיקוח היא לשולחן עבודה בלבד
+
+  if (isMobile) adaptMobileUI();   // בטלפון: טקסט מצלמה במקום שיתוף מסך
 });
+
+// התאמת ממשק לטלפון (מצב מצלמה)
+function adaptMobileUI() {
+  document.getElementById('shareIcon').textContent  = '📷';
+  document.getElementById('shareTitle').textContent = 'שתף את מצלמת הטלפון';
+  document.getElementById('shareDesc').innerHTML     = 'לחץ על הכפתור ואשר גישה למצלמה.<br>הצב את הטלפון כך שיראה אותך ואת סביבת העבודה.';
+  document.getElementById('shareBtn').textContent   = 'שתף מצלמה';
+  // החלפת כללי "מסך מלא" בכלל מתאים לטלפון
+  const rules = document.querySelector('.rules-list li:nth-child(2)');
+  if (rules) rules.innerHTML = 'עליך לשתף את <strong>מצלמת הטלפון</strong> לאורך כל המבחן, עם תאורה טובה.';
+}
 
 // כפתור הורדת אפליקציית הפיקוח (Option B) - מוצג רק אם אינה מותקנת
 function showAgentPrompt() {
@@ -345,9 +363,10 @@ document.addEventListener('fullscreenchange', () => {
 });
 
 async function startShare() {
+  if (shareMode === 'camera') return startCameraShare();   // טלפונים: מצלמה במקום מסך
   try {
     stream = await navigator.mediaDevices.getDisplayMedia({
-      video: { cursor: 'always', displaySurface: 'monitor', frameRate: { ideal: 5, max: 10 }, width: { max: 1920 }, height: { max: 1080 } }, 
+      video: { cursor: 'always', displaySurface: 'monitor', frameRate: { ideal: 5, max: 10 }, width: { max: 1920 }, height: { max: 1080 } },
       audio: false
     });
     const track    = stream.getVideoTracks()[0];
@@ -382,6 +401,51 @@ async function startShare() {
     if (err.name === 'NotAllowedError') showWarning('שיתוף המסך נדחה. יש לאשר את הבקשה כדי להמשיך במבחן.');
     else showWarning('שגיאה בשיתוף מסך: ' + err.message);
   }
+}
+
+// ── מצב מצלמה (לטלפונים - אין שיתוף מסך) ──────────────────
+async function startCameraShare() {
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: 'user', frameRate: { ideal: 8, max: 15 }, width: { ideal: 1280 }, height: { ideal: 720 } },
+      audio: false
+    });
+    const settings = stream.getVideoTracks()[0].getSettings();
+
+    const hiddenVid = document.getElementById('hiddenScreenVideo');
+    hiddenVid.srcObject = stream;
+    hiddenVid.play().catch(() => {});
+
+    // mode:'camera' מסמן למורה שזו מצלמה ולא מסך (לא נחשב "שיתוף חלקי")
+    ws.send(JSON.stringify({ type: 'resolution', resolution: `${settings.width}x${settings.height}`, surfaceType: 'monitor', mode: 'camera' }));
+
+    await setupPeerConnection();
+    await sendOffer();
+
+    document.getElementById('shareIcon').textContent  = '✅';
+    document.getElementById('shareTitle').textContent = 'המצלמה משותפת - בהצלחה!';
+    document.getElementById('shareDesc').textContent  = 'המורה רואה את מצלמת הטלפון. אל תסגור חלון זה ואל תכבה את המסך לאורך כל המבחן.';
+    document.getElementById('shareBtn').textContent   = 'עצור שיתוף';
+    document.getElementById('shareBtn').className      = 'btn red';
+    document.getElementById('shareBtn').onclick        = stopShare;
+    stream.getVideoTracks()[0].onended = () => stopShare(true);
+
+    fetch('/screenshots-status').then(r => r.json()).then(d => { if (d.enabled) startAutoScreenshots(); }).catch(() => {});
+  } catch (err) {
+    if (err.name === 'NotAllowedError') showWarning('הגישה למצלמה נדחתה. יש לאשר את המצלמה כדי להמשיך במבחן.');
+    else showWarning('שגיאה בגישה למצלמה: ' + err.message);
+  }
+}
+
+// כפתור להחלפת מצלמה קדמית/אחורית (טלפונים)
+let _camFacing = 'user';
+async function flipCamera() {
+  _camFacing = _camFacing === 'user' ? 'environment' : 'user';
+  if (stream) stream.getTracks().forEach(t => t.stop());
+  stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: _camFacing }, audio: false });
+  document.getElementById('hiddenScreenVideo').srcObject = stream;
+  await setupPeerConnection();
+  await sendOffer();
 }
 
 async function setupPeerConnection() {

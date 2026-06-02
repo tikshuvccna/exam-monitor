@@ -288,9 +288,16 @@ ws.onmessage = async e => {
     updateStudentsList(); updateConnCount();
   }
   if (msg.type === 'resolution') {
-    if (students[msg.id]) { students[msg.id].resolution = msg.resolution; updateStudentsList(); }
+    if (students[msg.id]) { students[msg.id].resolution = msg.resolution; students[msg.id].mode = msg.mode; updateStudentsList(); }
     const el = document.getElementById(`res-${msg.id}`);
     if (el) el.textContent = msg.resolution;
+    // תג מצלמה אם התלמיד משתף ממצלמת טלפון
+    const flagEl = document.getElementById(`flag-${msg.id}`);
+    if (flagEl && msg.mode === 'camera') {
+      flagEl.textContent = ' 📷';
+      flagEl.style.display = 'inline';
+      flagEl.title = 'משתף ממצלמת טלפון (לא מסך)';
+    }
   }
   if (msg.type === 'log')   addLogEntry(msg.entry);
   if (msg.type === 'alert') showAlert(msg.message);
