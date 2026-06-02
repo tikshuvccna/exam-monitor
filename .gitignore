@@ -1,0 +1,12 @@
+node_modules/
+config.json
+key.pem
+cert.pem
+cert.json
+logs/
+screenshots/
+exam_scan_log.csv
+*.rar
+*.zip
+agent/dist/
+agent/node_modules/

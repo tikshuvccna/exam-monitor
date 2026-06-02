@@ -1,0 +1,711 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>מערכת פיקוח מבחן</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Heebo:wght@300;400;500;600&display=swap');
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg:#0a0e1a; --surface:#111827; --surface2:#1a2235;
+    --border:#1e2d45; --accent:#00d4aa; --accent2:#3b82f6;
+    --warn:#f59e0b; --danger:#ef4444; --text:#e2e8f0; --text2:#64748b;
+    --sidebar-w:280px;
+  }
+  body { background:var(--bg); color:var(--text); font-family:'Heebo',sans-serif; min-height:100vh; display:flex; flex-direction:column; overflow:hidden; height:100vh; }
+
+  header { background:var(--surface); border-bottom:1px solid var(--border); padding:8px 16px; display:flex; align-items:center; gap:16px; flex-shrink:0; }
+  .logo { font-family:'IBM Plex Mono',monospace; font-size:12px; color:var(--accent); letter-spacing:2px; }
+  .stats-bar { display:flex; gap:16px; align-items:center; margin-right:auto; }
+  .stat { display:flex; align-items:center; gap:6px; font-size:12px; }
+  .stat-val { font-family:'IBM Plex Mono',monospace; font-size:18px; font-weight:500; line-height:1; }
+  .stat-val.green{color:var(--accent);} .stat-val.blue{color:var(--accent2);}
+  .setup-row { display:flex; align-items:center; gap:8px; }
+  input[type=number] { background:var(--surface2); border:1px solid var(--border); color:var(--text); border-radius:6px; padding:5px 8px; font-family:'IBM Plex Mono',monospace; font-size:13px; width:70px; text-align:center; }
+  button { background:var(--accent); color:#000; border:none; border-radius:6px; padding:6px 14px; font-family:'Heebo',sans-serif; font-size:12px; font-weight:600; cursor:pointer; transition:opacity 0.15s; white-space:nowrap; }
+  button:hover { opacity:0.85; }
+  button.secondary { background:var(--surface2); border:1px solid var(--border); color:var(--text); font-weight:400; }
+  .timer-display { font-family:'IBM Plex Mono',monospace; font-size:13px; color:var(--warn); min-width:40px; }
+  .checkbox-label { font-size:12px; color:var(--text); display:flex; align-items:center; gap:4px; cursor:pointer; background:var(--surface2); padding:5px 10px; border-radius:6px; border:1px solid var(--border); }
+
+  .alert-banner { background:rgba(239,68,68,0.12); border:1px solid rgba(239,68,68,0.5); border-radius:6px; margin:8px 16px 0; padding:8px 14px; font-size:13px; color:#fca5a5; display:none; animation:pulse 1s ease-in-out infinite alternate; flex-shrink:0; }
+  @keyframes pulse { from{border-color:rgba(239,68,68,0.4);} to{border-color:rgba(239,68,68,0.9);} }
+
+  .main { display:flex; flex:1; min-height:0; overflow:hidden; }
+
+  .grid-area { flex:1; padding:12px; overflow-y:auto; min-width:0; }
+  .grid-label { font-size:11px; font-family:'IBM Plex Mono',monospace; color:var(--text2); text-transform:uppercase; letter-spacing:1.5px; margin-bottom:10px; }
+  .video-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(220px,1fr)); gap:10px; }
+
+  .student-card { background:var(--surface); border:1px solid var(--border); border-radius:8px; overflow:visible; position:relative; }
+  .student-card.disconnected { opacity:0.4; border-color:var(--danger); }
+
+  .video-wrap { background:#000; aspect-ratio:16/9; display:flex; align-items:center; justify-content:center; border-radius:8px 8px 0 0; overflow:hidden; position:relative; }
+  .video-wrap video { width:100%; height:100%; object-fit:contain; }
+  .video-placeholder { color:var(--text2); font-family:'IBM Plex Mono',monospace; font-size:10px; text-align:center; }
+
+  .hover-zoom {
+    display: none; position: fixed; z-index: 900;
+    width: min(1350px, 90vw);
+    aspect-ratio: 16/9; background: #000; border: 2px solid var(--accent);
+    border-radius: 10px; box-shadow: 0 12px 60px rgba(0,0,0,0.85);
+    pointer-events: none; top: 50%; left: 42%; transform: translate(-50%, -50%); overflow: hidden;
+  }
+  .hover-zoom video { width:100%; height:100%; object-fit:contain; border-radius:8px; display:block; }
+  .hover-zoom-info {
+    position: absolute; bottom: 0; left: 0; right: 0;
+    background: linear-gradient(transparent, rgba(0,0,0,0.85));
+    padding: 20px 14px 10px; font-family: 'IBM Plex Mono', monospace;
+    font-size: 13px; color: #e2e8f0; display: flex; gap: 12px; align-items: flex-end;
+  }
+  .hover-zoom-name { font-size: 15px; font-weight: 600; color: var(--accent); }
+  .hover-zoom-ip { font-size: 12px; color: #94a3b8; }
+  
+  /* תלוי במחלקת ה-CSS של ה-body */
+  body.enable-hover-zoom .student-card:hover .hover-zoom { display:block; }
+
+  .card-info { padding:5px 8px; display:flex; align-items:center; gap:4px; }
+  .card-info-text { flex:1; min-width:0; }
+  .card-name { font-weight:600; font-size:12px; display:flex; align-items:center; gap:5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .dot { width:6px; height:6px; border-radius:50%; background:var(--accent); flex-shrink:0; }
+  .dot.offline{background:var(--danger);}
+  .card-meta { font-family:'IBM Plex Mono',monospace; font-size:10px; color:var(--text2); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+
+  .action-btn { border-radius:4px; padding:3px 6px; font-size:11px; font-weight:600; cursor:pointer; flex-shrink:0; transition:all 0.15s; border:1px solid; }
+  .shot-btn  { background:rgba(168,85,247,0.15); border-color:rgba(168,85,247,0.4); color:#c4b5fd; }
+  .shot-btn:hover  { background:#7c3aed; color:#fff; border-color:#7c3aed; opacity:1; }
+  .popup-btn { background:rgba(0,212,170,0.1); border-color:rgba(0,212,170,0.3); color:var(--accent); }
+  .popup-btn:hover { background:var(--accent); color:#000; border-color:var(--accent); opacity:1; }
+  .kick-btn  { background:rgba(239,68,68,0.15); border-color:rgba(239,68,68,0.4); color:#fca5a5; }
+  .kick-btn:hover  { background:var(--danger); color:#fff; border-color:var(--danger); opacity:1; }
+  .rec-btn { background:rgba(239,68,68,0.15); border:1px solid rgba(239,68,68,0.4); color:#fca5a5; }
+  .rec-btn.recording { background:var(--danger); color:#fff; border-color:var(--danger); animation:pulse 1s ease-in-out infinite alternate; }
+  
+  .screenshots-indicator { font-size:11px; color:#a78bfa; font-family:'IBM Plex Mono',monospace; display:none; align-items:center; gap:4px; }
+  .screenshots-indicator.active { display:flex; }
+
+  .sidebar { width:var(--sidebar-w); background:var(--surface); border-right:1px solid var(--border); display:flex; flex-direction:column; transition:width 0.2s ease; overflow:hidden; flex-shrink:0; }
+  .sidebar.collapsed { width:36px; }
+  .sidebar-toggle { background:none; border:none; border-bottom:1px solid var(--border); color:var(--text2); padding:8px; cursor:pointer; font-size:14px; width:100%; text-align:center; flex-shrink:0; border-radius:0; }
+  .sidebar-toggle:hover { background:var(--surface2); opacity:1; }
+  .sidebar-inner { flex:1; display:flex; flex-direction:column; overflow:hidden; min-width:var(--sidebar-w); }
+  .sidebar.collapsed .sidebar-inner { display:none; }
+
+  .sidebar-tabs { display:flex; border-bottom:1px solid var(--border); }
+  .tab { flex:1; padding:9px; text-align:center; font-size:11px; font-family:'IBM Plex Mono',monospace; color:var(--text2); cursor:pointer; border-bottom:2px solid transparent; background:none; border-radius:0; transition:all 0.15s; }
+  .tab.active { color:var(--accent); border-bottom-color:var(--accent); }
+
+  .tab-content { display:none; flex:1; overflow-y:auto; flex-direction:column; }
+  .tab-content.active { display:flex; }
+
+  .log-list { padding:8px; display:flex; flex-direction:column; gap:5px; }
+  .log-entry { font-family:'IBM Plex Mono',monospace; font-size:10px; padding:5px 7px; border-radius:4px; background:var(--surface2); border-right:3px solid var(--border); line-height:1.5; }
+  .log-entry.join{border-right-color:var(--accent);}
+  .log-entry.disconnect{border-right-color:var(--danger);}
+  .log-entry.warning{border-right-color:var(--warn);background:rgba(245,158,11,0.06);}
+  .log-entry.reconnect{border-right-color:var(--accent2);}
+  .log-time { color:var(--text2); font-size:9px; }
+
+  .students-list { padding:8px; display:flex; flex-direction:column; gap:6px; }
+  .student-row { background:var(--surface2); border:1px solid var(--border); border-radius:6px; padding:7px 9px; display:flex; align-items:center; gap:8px; }
+  .student-row-text { flex:1; min-width:0; }
+  .student-row-name { font-weight:600; font-size:12px; display:flex; align-items:center; gap:5px; }
+  .student-row-meta { font-family:'IBM Plex Mono',monospace; font-size:10px; color:var(--text2); }
+
+  .export-btn { margin:8px; }
+  .empty-state { text-align:center; color:var(--text2); font-size:12px; padding:40px 16px; font-family:'IBM Plex Mono',monospace; }
+</style>
+</head>
+<body class="enable-hover-zoom">
+
+<header>
+  <div class="logo">EXAM MONITOR</div>
+  <div class="stats-bar">
+    <div class="stat"><span class="stat-val green" id="connCount">0</span><span>מחוברים</span></div>
+    <div class="stat"><span>/</span><span class="stat-val blue" id="expCount">?</span><span>צפויים</span></div>
+    <div class="stat"><span class="timer-display" id="timerDisplay">--:--</span></div>
+  </div>
+  <div class="setup-row">
+    <label class="checkbox-label" title="הצג הגדלה של מסך התלמיד במעבר עכבר">
+      <input type="checkbox" id="hoverZoomToggle" checked onchange="toggleHoverZoom()">
+      הגדלה בריחוף
+    </label>
+    
+    <label style="font-size:12px;color:var(--text2); margin-right: 10px;">צפויים:</label>
+    <input type="number" id="expectedInput" min="1" max="200" placeholder="כמה?">
+    <button onclick="setExpected()">קבע</button>
+    <button class="secondary" onclick="startTimer()">⏱ שעון</button>
+    
+    <button class="secondary" id="autoShotBtn" onclick="toggleAutoScreenshots()">📸 התחל צילום אוטומטי</button>
+    
+    <button class="secondary" onclick="exportReport()">⬇ CSV</button>
+    <button class="secondary" onclick="downloadFullReport()">⬇ דוח מלא</button>
+    <button class="secondary" onclick="downloadFullLog()">⬇ לוג TXT</button>
+    <button class="secondary rec-btn" id="recBtn" onclick="toggleRecording()">⏺ הקלט מסך ניהול</button>
+    <span class="screenshots-indicator" id="screenshotsIndicator">📸 צילומים פעילים</span>
+  </div>
+</header>
+
+<!-- סרגל שליטה -->
+<div style="background:var(--surface2);border-bottom:1px solid var(--border);padding:6px 16px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12px;">
+  <span style="color:var(--text2);font-family:'IBM Plex Mono',monospace;">שליטה:</span>
+  <label class="checkbox-label"><input type="checkbox" id="selectAll" onchange="toggleSelectAll()"> בחר הכל</label>
+  <span id="selCount" style="color:var(--text2);">0 נבחרו</span>
+  <span style="width:1px;height:18px;background:var(--border);"></span>
+  <button id="broadcastBtn" onclick="toggleBroadcast()">📡 שתף מסך לכולם</button>
+  <button class="secondary" onclick="sendMessage()">✉️ הודעה</button>
+  <button class="secondary" onclick="broadcastCountdown()">⏳ שדר ספירה</button>
+  <button class="secondary" onclick="control('screen-lock', true)">🔒 נעל</button>
+  <button class="secondary" onclick="control('screen-lock', false)">🔓 שחרר</button>
+  <button class="secondary" onclick="control('input-block', true)">⌨️ חסום קלט</button>
+  <button class="secondary" onclick="control('input-block', false)">⌨️ שחרר קלט</button>
+  <button class="secondary" onclick="control('agent-launch')">🚀 הפעל אפליקציה</button>
+  <span style="color:var(--text2);font-size:11px;">(פעולות חלות על הנבחרים, או על כולם אם אין בחירה)</span>
+</div>
+
+<div id="alertBanner" class="alert-banner"></div>
+
+<div class="main">
+  <div class="grid-area">
+    <div class="grid-label">מסכי תלמידים</div>
+    <div class="video-grid" id="videoGrid">
+      <div class="empty-state">ממתין לחיבור תלמידים...</div>
+    </div>
+  </div>
+
+  <div class="sidebar" id="sidebar">
+    <button class="sidebar-toggle" onclick="toggleSidebar()" title="הסתר/הצג">◀</button>
+    <div class="sidebar-inner">
+      <div class="sidebar-tabs">
+        <div class="tab active" onclick="showTab('log')">לוג</div>
+        <div class="tab" onclick="showTab('students')">תלמידים</div>
+      </div>
+      <div class="tab-content active" id="tab-log">
+        <div class="log-list" id="logList"></div>
+      </div>
+      <div class="tab-content" id="tab-students">
+        <div class="students-list" id="studentsList"></div>
+        <button class="export-btn" onclick="exportReport()">⬇ ייצא CSV</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const ws = new WebSocket(`wss://${location.host}`);
+const peers    = {};
+const students = {};
+const cardTimers = {};   // interval-ים של משך זמן לכל כרטיס - לניקוי בהסרה
+let expectedCount    = 0;
+let timerInterval    = null;
+let timerStart       = null;
+let sidebarCollapsed = false;
+let iceServers = [{ urls: 'stun:stun.l.google.com:19302' }];
+let screenshotsEnabled = false;
+let mediaRecorder = null;
+let recordedChunks = [];
+
+fetch('/turn-config').then(r => r.json()).then(cfg => {
+  iceServers = [
+    { urls: 'stun:stun.l.google.com:19302' },
+    { urls: `turn:${location.hostname}:${cfg.port}`, username: cfg.user, credential: cfg.pass },
+  ];
+}).catch(() => {});
+
+ws.onopen = () => ws.send(JSON.stringify({ type: 'admin-join' }));
+
+ws.onmessage = async e => {
+  const msg = JSON.parse(e.data);
+
+  if (msg.type === 'state') {
+    expectedCount = msg.expectedCount;
+    document.getElementById('expCount').textContent = expectedCount || '?';
+    if (expectedCount) document.getElementById('expectedInput').value = expectedCount;
+    msg.students.forEach(s => { students[s.id] = s; updateStudentCard(s); });
+    updateStudentsList(); updateConnCount();
+    msg.log.forEach(entry => addLogEntry(entry));
+    
+    if (msg.screenshotsEnabled) {
+      screenshotsEnabled = true;
+      document.getElementById('autoShotBtn').textContent = '⏹ עצור צילום אוטומטי';
+      document.getElementById('autoShotBtn').classList.add('recording');
+      document.getElementById('screenshotsIndicator').classList.add('active');
+    }
+  }
+  
+  if (msg.type === 'auto-shots-status') {
+    screenshotsEnabled = msg.enabled;
+    const btn = document.getElementById('autoShotBtn');
+    const ind = document.getElementById('screenshotsIndicator');
+    if (screenshotsEnabled) {
+      btn.textContent = '⏹ עצור צילום אוטומטי';
+      btn.classList.add('recording');
+      ind.classList.add('active');
+    } else {
+      btn.textContent = '📸 התחל צילום אוטומטי';
+      btn.classList.remove('recording');
+      ind.classList.remove('active');
+    }
+  }
+
+  // טיפול בעצירת השיתוף על ידי התלמיד
+  if (msg.type === 'stop-share') {
+    const video = document.getElementById(`video-${msg.id}`);
+    const ph    = document.getElementById(`placeholder-${msg.id}`);
+    if (video) {
+      video.srcObject = null;
+      video.style.display = 'none';
+    }
+    if (ph) ph.style.display = 'block';
+  }
+
+  if (msg.type === 'student-join') {
+    students[msg.student.id] = msg.student;
+    updateStudentCard(msg.student); updateStudentsList(); updateConnCount();
+    await createPeerConnection(msg.student.id);
+    if (bcStream) await startBroadcastTo(msg.student.id);   // אם שידור פעיל - שלח גם לתלמיד החדש
+  }
+  if (msg.type === 'reconnect') {
+    students[msg.student.id] = { ...students[msg.student.id], ...msg.student };
+    const card = document.getElementById(`card-${msg.student.id}`);
+    if (card) card.classList.remove('disconnected');
+    updateStudentsList(); updateConnCount();
+    await createPeerConnection(msg.student.id);
+  }
+  if (msg.type === 'student-leave') {
+    const card = document.getElementById(`card-${msg.id}`);
+    if (card) card.classList.add('disconnected');
+    const dot = document.getElementById(`dot-${msg.id}`);
+    if (dot) dot.className = 'dot offline';
+    updateConnCount(); updateStudentsList();
+  }
+  if (msg.type === 'student-remove') {
+    const card = document.getElementById(`card-${msg.id}`);
+    if (card) card.remove();
+    if (cardTimers[msg.id]) { clearInterval(cardTimers[msg.id]); delete cardTimers[msg.id]; }
+    delete students[msg.id];
+    updateStudentsList(); updateConnCount();
+  }
+  if (msg.type === 'resolution') {
+    if (students[msg.id]) { students[msg.id].resolution = msg.resolution; updateStudentsList(); }
+    const el = document.getElementById(`res-${msg.id}`);
+    if (el) el.textContent = msg.resolution;
+  }
+  if (msg.type === 'log')   addLogEntry(msg.entry);
+  if (msg.type === 'alert') showAlert(msg.message);
+  if (msg.type === 'flag')  showFlag(msg);
+  if (msg.type === 'answer' && msg.subtype === 'broadcast') await handleBroadcastAnswer(msg);
+  if (msg.type === 'expected') {
+    expectedCount = msg.count;
+    document.getElementById('expCount').textContent = msg.count;
+    updateConnCount();
+  }
+  if (msg.type === 'offer') await handleOffer(msg);
+  if (msg.type === 'ice') {
+    const pc = msg.subtype === 'broadcast' ? bcPeers[msg.from] : peers[msg.from];
+    if (pc && msg.candidate) { try { await pc.addIceCandidate(msg.candidate); } catch {} }
+  }
+};
+
+async function createPeerConnection(id) {
+  if (peers[id]) peers[id].close();
+  const pc = new RTCPeerConnection({ iceServers });
+  peers[id] = pc;
+  pc.ontrack = e => {
+    if (!e.streams[0]) return;
+    const video    = document.getElementById(`video-${id}`);
+    const ph       = document.getElementById(`placeholder-${id}`);
+    const zoomVid  = document.getElementById(`zoom-video-${id}`);
+    if (video) {
+      video.srcObject = e.streams[0];
+      video.style.display = 'block';
+      if (ph) ph.style.display = 'none'; // כשהשיתוף מתחדש נסתיר את השלט הריק
+    }
+    if (zoomVid) zoomVid.srcObject = e.streams[0];
+  };
+  pc.onicecandidate = e => {
+    if (e.candidate) ws.send(JSON.stringify({ type:'ice', target:id, candidate:e.candidate }));
+  };
+  return pc;
+}
+
+async function handleOffer(msg) {
+  let pc = peers[msg.from];
+  if (!pc) pc = await createPeerConnection(msg.from);
+  await pc.setRemoteDescription(msg.offer);
+  const answer = await pc.createAnswer();
+  await pc.setLocalDescription(answer);
+  ws.send(JSON.stringify({ type:'answer', target:msg.from, answer }));
+}
+
+function kickStudent(id) {
+  const s = students[id];
+  if (!s) return;
+  if (!confirm(`להעיף את ${s.name} מהמערכת?`)) return;
+  ws.send(JSON.stringify({ type: 'kick', id }));
+}
+
+function captureManualShot(id) {
+  const s     = students[id];
+  const video = document.getElementById(`video-${id}`);
+  if (!video || !video.srcObject) { alert('אין שידור פעיל לתלמיד זה'); return; }
+  const canvas = document.createElement('canvas');
+  canvas.width  = video.videoWidth  || 1920;
+  canvas.height = video.videoHeight || 1080;
+  canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
+  const imageData = canvas.toDataURL('image/jpeg', 0.8);
+  const studentName = s ? s.name : 'unknown';
+  fetch('/manual-screenshot', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ studentName, imageData })
+  }).then(() => {
+    const btn = document.querySelector(`#card-${id} .shot-btn`);
+    if (btn) { btn.textContent = '✅'; setTimeout(() => btn.textContent = '📸', 1000); }
+  }).catch(() => alert('שגיאה בשמירת הצילום'));
+}
+
+function toggleAutoScreenshots() {
+  screenshotsEnabled = !screenshotsEnabled;
+  ws.send(JSON.stringify({ type: 'toggle-auto-shots', enabled: screenshotsEnabled }));
+}
+
+async function toggleRecording() {
+  const btn = document.getElementById('recBtn');
+  if (mediaRecorder && mediaRecorder.state === 'recording') {
+    mediaRecorder.stop();
+    btn.textContent = '⏺ הקלט מסך ניהול';
+    btn.classList.remove('recording');
+    return;
+  }
+  try {
+    const recStream = await navigator.mediaDevices.getDisplayMedia({ 
+      video: { displaySurface: "browser" }, 
+      preferCurrentTab: true,
+      audio: false 
+    });
+    
+    recordedChunks = [];
+    
+    let mime = 'video/webm;codecs=vp9';
+    const types = ['video/mp4', 'video/webm;codecs=h264', 'video/webm;codecs=vp9'];
+    for (let t of types) {
+      if (MediaRecorder.isTypeSupported(t)) { mime = t; break; }
+    }
+    const ext = mime.includes('mp4') ? 'mp4' : 'webm';
+    
+    mediaRecorder = new MediaRecorder(recStream, { mimeType: mime });
+    mediaRecorder.ondataavailable = e => { if (e.data.size > 0) recordedChunks.push(e.data); };
+    mediaRecorder.onstop = () => {
+      const blob = new Blob(recordedChunks, { type: mime });
+      const url  = URL.createObjectURL(blob);
+      const a    = document.createElement('a');
+      const ts   = new Date().toLocaleDateString('he-IL').replace(/\//g, '-');
+      a.href     = url;
+      a.download = `exam-recording-${ts}.${ext}`;
+      a.click();
+      URL.revokeObjectURL(url);
+      btn.textContent = '⏺ הקלט מסך ניהול';
+      btn.classList.remove('recording');
+      recStream.getTracks().forEach(t => t.stop());
+    };
+    mediaRecorder.start(5000); 
+    btn.textContent = '⏹ עצור הקלטה';
+    btn.classList.add('recording');
+  } catch (err) {
+    if (err.name !== 'NotAllowedError') alert('שגיאה בהקלטה: ' + err.message);
+  }
+}
+
+function openPopup(id) {
+  const s     = students[id];
+  const video = document.getElementById(`video-${id}`);
+  if (!video || !video.srcObject) return;
+  const stream = video.srcObject;
+  const name   = s ? s.name : 'תלמיד';
+  const ip     = s ? s.ip : 'לא זמין'; // משיכת כתובת ה-IP של התלמיד
+
+  // שימוש ב-'_blank' מבטיח שכל לחיצה תפתח חלון חדש לחלוטין ולא תחליף אף חלון קיים
+  const popup = window.open('', '_blank', 'width=960,height=560,resizable=yes');
+  if (!popup) { alert('אפשר חלונות קופצים בדפדפן'); return; }
+
+  // בניית דף ה-HTML של החלון הקופץ, כולל ה-IP
+  popup.document.write(`<!DOCTYPE html>
+<html><head><meta charset="UTF-8"><title>${name} - צפייה במסך</title>
+<style>
+  body{margin:0;background:#000;display:flex;align-items:center;justify-content:center;
+    height:100vh;flex-direction:column;gap:10px;font-family:sans-serif;}
+  video{max-width:100%;max-height:calc(100vh - 45px);object-fit:contain;}
+  .info-bar{display:flex;gap:12px;align-items:baseline;}
+  .name{color:#e2e8f0;font-size:15px;font-weight:bold;margin:0;}
+  .ip{color:#94a3b8;font-size:13px;font-family:monospace;margin:0;}
+</style></head>
+<body>
+  <video id="v" autoplay playsinline muted></video>
+  <div class="info-bar">
+    <p class="name">${name}</p>
+    <p class="ip">IP: ${ip}</p>
+  </div>
+</body></html>`);
+  popup.document.close();
+
+  const attach = () => {
+    try {
+      const v = popup.document.getElementById('v');
+      if (v) v.srcObject = stream;
+    } catch {}
+  };
+  setTimeout(attach, 200);
+  popup.addEventListener('load', attach);
+}
+
+function updateStudentCard(s) {
+  const grid  = document.getElementById('videoGrid');
+  const empty = grid.querySelector('.empty-state');
+  if (empty) empty.remove();
+  if (document.getElementById(`card-${s.id}`)) return;
+
+  const card = document.createElement('div');
+  card.className = 'student-card';
+  card.id = `card-${s.id}`;
+  card.innerHTML = `
+    <div class="video-wrap">
+      <video id="video-${s.id}" autoplay playsinline muted style="display:none"></video>
+      <div class="video-placeholder" id="placeholder-${s.id}">ממתין לשיתוף...</div>
+      <div class="hover-zoom">
+        <video id="zoom-video-${s.id}" autoplay playsinline muted></video>
+        <div class="hover-zoom-info">
+          <span class="hover-zoom-name">${s.name}</span>
+          <span class="hover-zoom-ip">IP: ${s.ip}</span>
+        </div>
+      </div>
+    </div>
+    <div class="card-info">
+      <input type="checkbox" class="sel-box" data-id="${s.id}" onchange="updateSelCount()" title="בחר תלמיד" style="flex-shrink:0;">
+      <div class="card-info-text">
+        <div class="card-name"><div class="dot" id="dot-${s.id}"></div>${s.name}<span id="flag-${s.id}" style="display:none;font-size:11px;"></span></div>
+        <div class="card-meta"><span>${s.ip}</span> · <span id="res-${s.id}">${s.resolution||'-'}</span> · <span id="dur-${s.id}">0s</span></div>
+      </div>
+      <button class="action-btn shot-btn" onclick="captureManualShot(${s.id})" title="צלם מסך">📸</button>
+      <button class="action-btn popup-btn" onclick="openPopup(${s.id})"      title="פתח בחלון נפרד">⧉</button>
+      <button class="action-btn kick-btn"  onclick="kickStudent(${s.id})"    title="העף תלמיד">✕</button>
+    </div>`;
+  grid.appendChild(card);
+
+  cardTimers[s.id] = setInterval(() => {
+    const el = document.getElementById(`dur-${s.id}`);
+    if (el) el.textContent = formatDuration(Math.floor((Date.now() - s.connectedAt) / 1000));
+  }, 1000);
+}
+
+function formatDuration(sec) {
+  if (sec < 60) return `${sec}s`;
+  return `${Math.floor(sec/60)}m${String(sec%60).padStart(2,'0')}s`;
+}
+
+function updateStudentsList() {
+  const list = document.getElementById('studentsList');
+  list.innerHTML = '';
+  Object.values(students).forEach(s => {
+    const online = !document.getElementById(`card-${s.id}`)?.classList.contains('disconnected');
+    const sec    = Math.floor((Date.now() - s.connectedAt) / 1000);
+    const div    = document.createElement('div');
+    div.className = 'student-row';
+    div.innerHTML = `
+      <div class="student-row-text">
+        <div class="student-row-name"><div class="dot ${online?'':'offline'}"></div>${s.name}</div>
+        <div class="student-row-meta">${s.ip} | ${s.resolution||'-'} | ${formatDuration(sec)}</div>
+      </div>
+      <button class="action-btn kick-btn" onclick="kickStudent(${s.id})" title="העף">✕</button>`;
+    list.appendChild(div);
+  });
+}
+
+function updateConnCount() {
+  const online = Object.values(students).filter(s => !document.getElementById(`card-${s.id}`)?.classList.contains('disconnected')).length;
+  document.getElementById('connCount').textContent = online;
+  document.getElementById('expCount').style.color = (expectedCount > 0 && online < expectedCount) ? 'var(--danger)' : 'var(--accent2)';
+}
+
+function addLogEntry(entry) {
+  const list = document.getElementById('logList');
+  const div  = document.createElement('div');
+  div.className = `log-entry ${entry.type}`;
+  const time = new Date(entry.time).toLocaleTimeString('he-IL');
+  div.innerHTML = `<div class="log-time">${time}</div><div>${entry.message}</div>`;
+  list.insertBefore(div, list.firstChild);
+  if (list.children.length > 200) list.removeChild(list.lastChild);
+}
+
+function showAlert(msg) {
+  const banner = document.getElementById('alertBanner');
+  banner.textContent = '⚠️ ' + msg;
+  banner.style.display = 'block';
+  try {
+    const ctx = new AudioContext(), osc = ctx.createOscillator(), gain = ctx.createGain();
+    osc.connect(gain); gain.connect(ctx.destination);
+    osc.frequency.value = 880;
+    gain.gain.setValueAtTime(0.3, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.5);
+    osc.start(); osc.stop(ctx.currentTime + 0.5);
+  } catch {}
+  setTimeout(() => { banner.style.display = 'none'; }, 8000);
+}
+
+function setExpected() {
+  const val = parseInt(document.getElementById('expectedInput').value);
+  if (!val || val < 1) return;
+  ws.send(JSON.stringify({ type: 'set-expected', count: val }));
+}
+
+function showTab(name) {
+  document.querySelectorAll('.tab').forEach((t,i) => t.classList.toggle('active', ['log','students'][i] === name));
+  document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+  document.getElementById(`tab-${name}`).classList.add('active');
+}
+
+function toggleSidebar() {
+  sidebarCollapsed = !sidebarCollapsed;
+  const sb = document.getElementById('sidebar');
+  sb.classList.toggle('collapsed', sidebarCollapsed);
+  sb.querySelector('.sidebar-toggle').textContent = sidebarCollapsed ? '▶' : '◀';
+}
+
+function startTimer() {
+  if (timerInterval) {
+    clearInterval(timerInterval); timerInterval = null;
+    document.getElementById('timerDisplay').textContent = '--:--';
+    return;
+  }
+  timerStart = Date.now();
+  fetch('/timer-started', { method: 'POST' }).catch(() => {});
+  timerInterval = setInterval(() => {
+    const sec = Math.floor((Date.now() - timerStart) / 1000);
+    document.getElementById('timerDisplay').textContent =
+      `${String(Math.floor(sec/60)).padStart(2,'0')}:${String(sec%60).padStart(2,'0')}`;
+  }, 1000);
+}
+
+// פונקציה להדלקה וכיבוי של ההגדלה בריחוף
+function toggleHoverZoom() {
+  document.body.classList.toggle('enable-hover-zoom', document.getElementById('hoverZoomToggle').checked);
+}
+
+function exportReport() {
+  const rows = [['שם','כתובת IP','רזולוציה','זמן חיבור (שניות)','סטטוס']];
+  Object.values(students).forEach(s => {
+    const online = !document.getElementById(`card-${s.id}`)?.classList.contains('disconnected');
+    rows.push([s.name, s.ip, s.resolution||'-', Math.floor((Date.now()-s.connectedAt)/1000), online?'מחובר':'מנותק']);
+  });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob(['\uFEFF'+rows.map(r=>r.join(',')).join('\n')], {type:'text/csv;charset=utf-8'}));
+  a.download = `exam-now-${new Date().toLocaleDateString('he-IL').replace(/\//g,'-')}.csv`;
+  a.click();
+}
+
+function downloadFullReport() {
+  window.location.href = '/download-report';
+}
+
+function downloadFullLog() {
+  window.location.href = '/download-log';
+}
+
+// ════════ שליטה בתלמידים ════════
+
+// בחירת יעד: הנבחרים, או 'all' אם אין בחירה
+function selectedTargets() {
+  const ids = [...document.querySelectorAll('.sel-box:checked')].map(b => parseInt(b.dataset.id));
+  return ids.length ? ids : 'all';
+}
+function updateSelCount() {
+  const n = document.querySelectorAll('.sel-box:checked').length;
+  document.getElementById('selCount').textContent = n ? `${n} נבחרו` : '0 נבחרו';
+}
+function toggleSelectAll() {
+  const on = document.getElementById('selectAll').checked;
+  document.querySelectorAll('.sel-box').forEach(b => b.checked = on);
+  updateSelCount();
+}
+
+// פקודת שליטה גנרית
+function control(action, on) {
+  const target = selectedTargets();
+  const payload = { type:'control', action, target };
+  if (typeof on === 'boolean') payload.on = on;
+  ws.send(JSON.stringify(payload));
+}
+
+function sendMessage() {
+  const text = prompt('הודעה לתלמידים הנבחרים (או לכולם):');
+  if (!text) return;
+  ws.send(JSON.stringify({ type:'control', action:'message', target:selectedTargets(), message:text }));
+}
+
+function broadcastCountdown() {
+  const mins = parseInt(prompt('כמה דקות לספירה לאחור?', '30'));
+  if (!mins || mins < 1) return;
+  ws.send(JSON.stringify({ type:'control', action:'countdown', target:'all', on:true, endsAt: Date.now() + mins*60*1000 }));
+}
+
+// סימון דגל חשד על כרטיס התלמיד
+function showFlag(msg) {
+  const el = document.getElementById(`flag-${msg.id}`);
+  if (el) {
+    const icons = { 'tab-hidden':'👁','second-screen':'🖥️🖥️','paste':'📋','copy':'📋','lock-escape':'🚪' };
+    el.textContent = ' ' + (icons[msg.kind] || '⚠️');
+    el.style.display = 'inline';
+    el.title = msg.message;
+  }
+  showAlert(msg.message);
+}
+
+// ── שידור מסך המורה לכל התלמידים (feature b) ──
+const bcPeers = {};
+let bcStream = null;
+async function toggleBroadcast() {
+  const btn = document.getElementById('broadcastBtn');
+  if (bcStream) {   // עצירה
+    bcStream.getTracks().forEach(t => t.stop());
+    bcStream = null;
+    Object.values(bcPeers).forEach(pc => pc.close());
+    for (const k in bcPeers) delete bcPeers[k];
+    ws.send(JSON.stringify({ type:'control', action:'broadcast-end', target:'all' })); // סוגר שכבה אצל התלמידים
+    btn.textContent = '📡 שתף מסך לכולם';
+    btn.classList.remove('recording');
+    return;
+  }
+  try {
+    bcStream = await navigator.mediaDevices.getDisplayMedia({ video:{ frameRate:{ ideal:10 } }, audio:false });
+    bcStream.getVideoTracks()[0].onended = () => { if (bcStream) toggleBroadcast(); };
+    btn.textContent = '⏹ עצור שיתוף';
+    btn.classList.add('recording');
+    for (const id of Object.keys(students)) await startBroadcastTo(id);
+  } catch (err) {
+    bcStream = null;
+    if (err.name !== 'NotAllowedError') alert('שגיאה בשיתוף: ' + err.message);
+  }
+}
+
+async function startBroadcastTo(id) {
+  if (!bcStream) return;
+  if (bcPeers[id]) bcPeers[id].close();
+  const pc = new RTCPeerConnection({ iceServers });
+  bcPeers[id] = pc;
+  bcStream.getTracks().forEach(t => pc.addTrack(t, bcStream));
+  pc.onicecandidate = e => {
+    if (e.candidate) ws.send(JSON.stringify({ type:'ice', subtype:'broadcast', target:id, candidate:e.candidate }));
+  };
+  const offer = await pc.createOffer();
+  await pc.setLocalDescription(offer);
+  ws.send(JSON.stringify({ type:'offer', subtype:'broadcast', target:id, offer }));
+}
+
+async function handleBroadcastAnswer(msg) {
+  const pc = bcPeers[msg.from];
+  if (pc) { try { await pc.setRemoteDescription(msg.answer); } catch {} }
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,33 @@
+{
+  "name": "exam-client",
+  "version": "1.0.0",
+  "description": "Exam Monitor companion agent (kiosk + OS-level lock/input-block + remote launch)",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder --win nsis"
+  },
+  "build": {
+    "appId": "com.exammonitor.client",
+    "productName": "Exam Client",
+    "win": {
+      "target": "nsis"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false
+    },
+    "protocols": [
+      {
+        "name": "Exam Client",
+        "schemes": ["examclient"]
+      }
+    ]
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "electron": "^31.0.0",
+    "electron-builder": "^24.13.3"
+  },
+  "//optionalNative": "Install @nut-tree/nut-js or robotjs to enable true OS-level input blocking / remote control. They need native build tools."
+}

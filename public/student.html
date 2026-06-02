@@ -1,0 +1,465 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>מבחן - שיתוף מסך</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Heebo:wght@300;400;500;600;700&display=swap');
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg:#0f172a; --surface:#1e293b; --border:#334155;
+    --accent:#00d4aa; --danger:#ef4444; --warn:#f59e0b;
+    --text:#e2e8f0; --text2:#94a3b8;
+  }
+  body { background:var(--bg); color:var(--text); font-family:'Heebo',sans-serif; min-height:100vh; display:flex; align-items:flex-start; justify-content:center; padding:24px 16px; }
+  .page { width:100%; max-width:520px; display:flex; flex-direction:column; gap:16px; }
+
+  .rules-box { background:rgba(239,68,68,0.07); border:1px solid rgba(239,68,68,0.35); border-radius:12px; padding:18px 20px; }
+  .rules-title { font-size:15px; font-weight:700; color:#fca5a5; margin-bottom:12px; display:flex; align-items:center; gap:8px; }
+  .rules-list { list-style:none; display:flex; flex-direction:column; gap:8px; }
+  .rules-list li { font-size:13px; line-height:1.6; color:#fcd5d5; display:flex; gap:8px; }
+  .rules-list li::before { content:'•'; color:var(--danger); font-weight:700; flex-shrink:0; margin-top:1px; }
+  .rules-note { margin-top:12px; padding-top:12px; border-top:1px solid rgba(239,68,68,0.25); font-size:12px; font-weight:700; color:#fca5a5; text-align:center; }
+
+  .allowed-box { background:rgba(0,212,170,0.06); border:1px solid rgba(0,212,170,0.25); border-radius:10px; padding:12px 16px; font-size:13px; color:#a7f3e4; line-height:1.6; }
+  .allowed-box strong { color:var(--accent); }
+
+  .card { background:var(--surface); border:1px solid var(--border); border-radius:14px; padding:28px 32px; text-align:center; }
+  .icon { font-size:40px; margin-bottom:12px; }
+  h1 { font-size:20px; font-weight:600; margin-bottom:6px; }
+  p.sub { color:var(--text2); font-size:13px; line-height:1.6; margin-bottom:20px; }
+  input[type=text] { width:100%; background:var(--bg); border:1px solid var(--border); border-radius:8px; padding:11px 16px; font-family:'Heebo',sans-serif; font-size:15px; color:var(--text); text-align:center; margin-bottom:14px; outline:none; transition:border-color 0.2s; }
+  input[type=text]:focus { border-color:var(--accent); }
+  .btn { width:100%; background:var(--accent); color:#000; border:none; border-radius:8px; padding:13px; font-family:'Heebo',sans-serif; font-size:15px; font-weight:700; cursor:pointer; transition:opacity 0.15s, transform 0.1s; }
+  .btn:hover{opacity:0.9;} .btn:active{transform:scale(0.98);} .btn:disabled{opacity:0.4;cursor:not-allowed;}
+  .btn.red { background:var(--danger); color:#fff; }
+
+  .status { display:flex; align-items:center; gap:10px; background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:12px 16px; font-size:13px; }
+  .dot { width:8px; height:8px; border-radius:50%; background:var(--text2); flex-shrink:0; }
+  .dot.green{background:var(--accent);animation:blink 2s ease-in-out infinite;}
+  .dot.red{background:var(--danger);} .dot.yellow{background:var(--warn);}
+  @keyframes blink{0%,100%{opacity:1}50%{opacity:0.4}}
+
+  .warning-box { background:rgba(245,158,11,0.1); border:1px solid rgba(245,158,11,0.3); border-radius:10px; padding:12px 16px; font-size:13px; color:#fcd34d; line-height:1.6; display:none; }
+  .kicked-box { background:rgba(239,68,68,0.12); border:2px solid var(--danger); border-radius:12px; padding:24px; text-align:center; font-size:15px; color:#fca5a5; display:none; font-weight:600; line-height:1.8; }
+
+  #loginScreen{} #shareScreen{display:none;}
+</style>
+</head>
+<body>
+<div class="page">
+
+  <div class="rules-box">
+    <div class="rules-title">⚠️ כללי המבחן - קרא בעיון</div>
+    <ul class="rules-list">
+      <li>אין לרמות בשום דרך: אין שיחה עם חברים, אין דיבורים, אין שיתוף תשובות.</li>
+      <li>עליך לשתף את <strong>המסך המלא</strong> בלבד - לא חלון ספציפי - לאורך כל המבחן.</li>
+      <li>עליך להזדהות עם <strong>שם מלא</strong> בלבד (שם ומשפחה).</li>
+      <li>אין להתנתק מהמערכת במהלך המבחן.</li>
+    </ul>
+    <div class="rules-note">⛔ הפרת כלל כלשהו תביא לפסילת המבחן מיידית</div>
+  </div>
+
+  <div class="card" id="loginScreen">
+    <div class="icon">🎓</div>
+    <h1>כניסה למבחן</h1>
+    <p class="sub">הכנס את שמך המלא כפי שהוא מופיע ברשימת הכיתה.</p>
+    <input type="text" id="nameInput" placeholder="שם מלא" maxlength="60" autocomplete="name">
+    <button class="btn" onclick="joinExam()" id="joinBtn">כניסה למבחן</button>
+  </div>
+
+  <div class="card" id="shareScreen">
+    <div class="icon" id="shareIcon">🖥️</div>
+    <h1 id="shareTitle">שתף את המסך שלך</h1>
+    <p class="sub" id="shareDesc">לחץ על הכפתור, בחר <strong>"כל המסך"</strong> ולחץ שתף.<br>אל תבחר חלון ספציפי!</p>
+    <button class="btn" onclick="startShare()" id="shareBtn">שתף את המסך המלא</button>
+  </div>
+
+  <div class="kicked-box" id="kickedBox">
+    🚫 הורחקת מהמבחן על ידי המורה.<br>פנה למורה לקבלת הסבר.
+  </div>
+
+  <div class="status">
+    <div class="dot" id="statusDot"></div>
+    <span id="statusText">מתחבר לשרת...</span>
+  </div>
+
+  <div class="warning-box" id="warningBox"></div>
+
+  <video id="hiddenScreenVideo" autoplay muted playsinline style="position:absolute; top:-9999px; left:-9999px; width:1920px; height:1080px; pointer-events:none;"></video>
+</div>
+
+<!-- באנר הודעה מהמורה -->
+<div id="teacherMsg" style="display:none;position:fixed;top:0;left:0;right:0;z-index:9000;background:#3b82f6;color:#fff;padding:14px 20px;text-align:center;font-weight:700;font-size:16px;box-shadow:0 4px 20px rgba(0,0,0,.4);"></div>
+
+<!-- ספירה לאחור -->
+<div id="countdown" style="display:none;position:fixed;top:12px;left:12px;z-index:8500;background:rgba(0,0,0,.75);color:#fcd34d;font-family:monospace;font-size:18px;font-weight:700;padding:8px 14px;border-radius:8px;"></div>
+
+<!-- שכבת שידור מסך המורה -->
+<div id="broadcastOverlay" style="display:none;position:fixed;inset:0;z-index:9500;background:#000;flex-direction:column;align-items:center;justify-content:center;">
+  <div style="color:#00d4aa;font-family:sans-serif;font-size:14px;padding:6px;">📡 המורה משתף מסך</div>
+  <video id="broadcastVideo" autoplay playsinline style="max-width:100%;max-height:calc(100vh - 40px);object-fit:contain;"></video>
+</div>
+
+<!-- שכבת נעילת מסך -->
+<div id="lockOverlay" style="display:none;position:fixed;inset:0;z-index:9800;background:#0a0e1a;flex-direction:column;align-items:center;justify-content:center;gap:18px;color:#e2e8f0;font-family:sans-serif;text-align:center;">
+  <div style="font-size:64px;">🔒</div>
+  <div id="lockText" style="font-size:22px;font-weight:700;">המבחן הושהה על ידי המורה</div>
+  <div style="font-size:14px;color:#64748b;">המתן להוראות המורה</div>
+</div>
+<script>
+let ws, pc, studentId, studentName, stream;
+let iceServers = [{ urls: 'stun:stun.l.google.com:19302' }];
+let kicked = false;
+let screenshotInterval = null;
+let pingInterval = null;
+
+fetch('/turn-config').then(r => r.json()).then(cfg => {
+  const turnUrl = `turn:${location.hostname}:${cfg.port}`;
+  iceServers = [
+    { urls: 'stun:stun.l.google.com:19302' },
+    { urls: turnUrl, username: cfg.user, credential: cfg.pass },
+  ];
+}).catch(() => {});
+
+function setStatus(text, color) {
+  document.getElementById('statusText').textContent = text;
+  document.getElementById('statusDot').className = 'dot ' + (color || '');
+}
+function showWarning(msg) {
+  const box = document.getElementById('warningBox');
+  box.textContent = '⚠️ ' + msg;
+  box.style.display = 'block';
+}
+
+let agentPresent = false;
+// בדיקה אם אפליקציית הפיקוח מותקנת ופועלת (מאזינה על localhost)
+function detectAgent() {
+  return fetch('http://127.0.0.1:7345/ping', { mode:'cors' })
+    .then(r => r.ok).catch(() => false);
+}
+
+window.addEventListener('load', async () => {
+  const saved = localStorage.getItem('examStudentName');
+  if (saved) document.getElementById('nameInput').value = saved;
+  document.getElementById('nameInput').addEventListener('keydown', e => { if (e.key === 'Enter') joinExam(); });
+
+  agentPresent = await detectAgent();
+  if (!agentPresent) showAgentPrompt();   // מציג כפתור הורדה אם האפליקציה לא מותקנת
+});
+
+// כפתור הורדת אפליקציית הפיקוח (Option B) - מוצג רק אם אינה מותקנת
+function showAgentPrompt() {
+  const box = document.createElement('div');
+  box.className = 'allowed-box';
+  box.style.cssText = 'display:flex;flex-direction:column;gap:8px;align-items:center;';
+  box.innerHTML = `
+    <div>למצב פיקוח מלא מומלץ להתקין את אפליקציית המבחן (פעם אחת).</div>
+    <a href="/download-agent" style="background:#00d4aa;color:#000;padding:8px 18px;border-radius:8px;font-weight:700;text-decoration:none;">⬇ הורד אפליקציית מבחן</a>
+    <div style="font-size:11px;color:#64748b;">אפשר להמשיך גם בלי - בפיקוח בסיסי דרך הדפדפן.</div>`;
+  document.querySelector('.page').insertBefore(box, document.getElementById('loginScreen'));
+}
+
+function connectWS(onOpen) {
+  ws = new WebSocket(`wss://${location.host}`);
+  ws.onopen = onOpen;
+  ws.onclose = () => {
+    if (kicked) return;
+    setStatus('מנותק - מנסה להתחבר מחדש...', 'red');
+    setTimeout(() => connectWS(() => { if (studentName) rejoin(); }), 2000);
+  };
+  ws.onerror = () => setStatus('שגיאת חיבור', 'red');
+  ws.onmessage = handleMessage;
+}
+
+function joinExam() {
+  const name = document.getElementById('nameInput').value.trim();
+  if (!name || name.split(' ').filter(Boolean).length < 2) { alert('נא להכניס שם מלא (שם ומשפחה)'); return; }
+  studentName = name;
+  localStorage.setItem('examStudentName', name);
+  document.getElementById('joinBtn').disabled = true;
+  connectWS(() => {
+    setStatus('מחובר לשרת', 'green');
+    ws.send(JSON.stringify({ type: 'student-join', name }));
+  });
+}
+
+function rejoin() {
+  setStatus('מתחבר מחדש...', 'yellow');
+  ws.send(JSON.stringify({ type: 'student-join', name: studentName }));
+}
+
+async function handleMessage(e) {
+  const msg = JSON.parse(e.data);
+
+  if (msg.type === 'kicked') {
+    kicked = true;
+    localStorage.removeItem('examStudentName');
+    document.getElementById('loginScreen').style.display = 'none';
+    document.getElementById('shareScreen').style.display = 'none';
+    document.getElementById('kickedBox').style.display = 'block';
+    setStatus('הורחקת מהמבחן', 'red');
+    if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
+    if (pc) { pc.close(); pc = null; }
+    return;
+  }
+
+  if (msg.type === 'joined') {
+    studentId = msg.id;
+    document.getElementById('loginScreen').style.display = 'none';
+    document.getElementById('shareScreen').style.display = 'block';
+    setStatus(`מחובר כ-${msg.name}`, 'green');
+    if (stream) { await setupPeerConnection(); sendOffer(); }
+    startPing();
+    checkSecondScreen();
+    if (window.screen?.addEventListener) window.screen.addEventListener('change', checkSecondScreen);
+  }
+  if (msg.type === 'answer') { if (pc) await pc.setRemoteDescription(msg.answer); }
+  if (msg.type === 'ice') { if (pc && msg.candidate) { try { await pc.addIceCandidate(msg.candidate); } catch {} } }
+  if (msg.type === 'request-offer') {
+    if (stream) { await setupPeerConnection(); await sendOffer(); }
+  }
+  if (msg.type === 'start-screenshots') startAutoScreenshots();
+  if (msg.type === 'stop-screenshots') stopAutoScreenshots();
+
+  // ── פקודות שליטה מהמורה ──────────────────────────────
+  if (msg.type === 'screen-lock')     setLock(msg.on, msg.message);
+  if (msg.type === 'input-block')     setInputBlock(msg.on);
+  if (msg.type === 'teacher-message') showTeacherMessage(msg.message);
+  if (msg.type === 'countdown')       setCountdown(msg.on, msg.endsAt);
+  if (msg.type === 'agent-launch')    location.href = 'examclient://start';
+
+  // ── שידור מסך המורה (broadcast) ──────────────────────
+  if (msg.type === 'offer' && msg.subtype === 'broadcast') await handleBroadcastOffer(msg);
+  if (msg.type === 'broadcast-end') endBroadcast();
+}
+
+// ════════ פיצ'רים חדשים ════════
+
+// --- נעילת מסך (גרסת דפדפן) ---
+function setLock(on, message) {
+  _locked = on;
+  const ov = document.getElementById('lockOverlay');
+  if (on) {
+    if (message) document.getElementById('lockText').textContent = message;
+    ov.style.display = 'flex';
+    document.documentElement.requestFullscreen?.().catch(() => {});
+    setInputBlock(true);
+  } else {
+    ov.style.display = 'none';
+    setInputBlock(false);
+  }
+}
+
+// --- חסימת קלט בתוך הלשונית ---
+const _swallow = e => { e.preventDefault(); e.stopPropagation(); return false; };
+let _inputBlocked = false;
+function setInputBlock(on) {
+  if (on === _inputBlocked) return;
+  _inputBlocked = on;
+  const evs = ['keydown','keyup','keypress','mousedown','contextmenu','paste','copy','cut'];
+  if (on) evs.forEach(ev => window.addEventListener(ev, _swallow, true));
+  else    evs.forEach(ev => window.removeEventListener(ev, _swallow, true));
+  // אם רצים בתוך אפליקציית הפיקוח - נצל חסימת קלט אמיתית ברמת מערכת ההפעלה
+  if (window.examAgent?.lockInput) window.examAgent.lockInput(on);
+}
+
+// --- הודעה מהמורה ---
+let _msgTimer = null;
+function showTeacherMessage(text) {
+  if (!text) return;
+  const el = document.getElementById('teacherMsg');
+  el.textContent = '✉️ ' + text;
+  el.style.display = 'block';
+  clearTimeout(_msgTimer);
+  _msgTimer = setTimeout(() => { el.style.display = 'none'; }, 15000);
+}
+
+// --- ספירה לאחור ---
+let _cdTimer = null;
+function setCountdown(on, endsAt) {
+  const el = document.getElementById('countdown');
+  clearInterval(_cdTimer);
+  if (!on || !endsAt) { el.style.display = 'none'; return; }
+  el.style.display = 'block';
+  const tick = () => {
+    const left = Math.max(0, Math.floor((endsAt - Date.now()) / 1000));
+    const m = Math.floor(left / 60), s = left % 60;
+    el.textContent = `⏳ ${m}:${String(s).padStart(2,'0')}`;
+    el.style.color = left <= 60 ? '#ef4444' : '#fcd34d';
+    if (left <= 0) clearInterval(_cdTimer);
+  };
+  tick(); _cdTimer = setInterval(tick, 1000);
+}
+
+// --- קבלת שידור מסך המורה ---
+let broadcastPc = null;
+async function handleBroadcastOffer(msg) {
+  if (broadcastPc) broadcastPc.close();
+  broadcastPc = new RTCPeerConnection({ iceServers });
+  broadcastPc.ontrack = e => {
+    document.getElementById('broadcastVideo').srcObject = e.streams[0];
+    document.getElementById('broadcastOverlay').style.display = 'flex';
+  };
+  broadcastPc.onicecandidate = e => {
+    if (e.candidate && ws.readyState === 1)
+      ws.send(JSON.stringify({ type:'ice', subtype:'broadcast', target:'admin', candidate:e.candidate }));
+  };
+  await broadcastPc.setRemoteDescription(msg.offer);
+  const answer = await broadcastPc.createAnswer();
+  await broadcastPc.setLocalDescription(answer);
+  ws.send(JSON.stringify({ type:'answer', subtype:'broadcast', target:'admin', answer }));
+}
+function endBroadcast() {
+  document.getElementById('broadcastOverlay').style.display = 'none';
+  document.getElementById('broadcastVideo').srcObject = null;
+  if (broadcastPc) { broadcastPc.close(); broadcastPc = null; }
+}
+
+// --- גילוי חשד: החלפת לשונית, הדבקה, מסך שני ---
+function reportEvent(obj) { if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type:'event', ...obj })); }
+
+document.addEventListener('visibilitychange', () => {
+  if (!studentId) return;
+  reportEvent({ kind: document.hidden ? 'tab-hidden' : 'tab-visible' });
+});
+window.addEventListener('paste', e => {
+  if (!studentId) return;
+  const txt = (e.clipboardData || window.clipboardData)?.getData('text') || '';
+  reportEvent({ kind:'paste', length: txt.length, preview: txt.slice(0, 40) });
+});
+window.addEventListener('copy', () => { if (studentId) reportEvent({ kind:'copy' }); });
+
+function checkSecondScreen() {
+  if (studentId && window.screen && window.screen.isExtended) reportEvent({ kind:'second-screen' });
+}
+
+// אם המסך נעול והתלמיד יצא ממסך מלא / עזב - דווח למורה
+let _locked = false;
+document.addEventListener('fullscreenchange', () => {
+  if (_locked && !document.fullscreenElement) {
+    reportEvent({ kind:'lock-escape' });
+    document.documentElement.requestFullscreen?.().catch(() => {});  // נסיון להחזיר
+  }
+});
+
+async function startShare() {
+  try {
+    stream = await navigator.mediaDevices.getDisplayMedia({
+      video: { cursor: 'always', displaySurface: 'monitor', frameRate: { ideal: 5, max: 10 }, width: { max: 1920 }, height: { max: 1080 } }, 
+      audio: false
+    });
+    const track    = stream.getVideoTracks()[0];
+    const settings = track.getSettings();
+    const surface  = settings.displaySurface; 
+
+    // הגדרת מקור הוידאו והפעלתו באופן אקטיבי כדי שירונדר ל-Canvas גם כשהוא מוסתר
+    const hiddenVid = document.getElementById('hiddenScreenVideo');
+    hiddenVid.srcObject = stream;
+    hiddenVid.play().catch(() => {});
+
+    ws.send(JSON.stringify({ type: 'resolution', resolution: `${settings.width}x${settings.height}`, surfaceType: surface }));
+
+    if (surface && surface !== 'monitor') {
+      showWarning('נראה ששיתפת רק חלון או כרטיסיה. אנא עצור ושתף שוב - בחר "כל המסך".');
+    }
+
+    await setupPeerConnection();
+    await sendOffer();
+
+    document.getElementById('shareIcon').textContent = '✅';
+    document.getElementById('shareTitle').textContent = 'המסך משותף - בהצלחה!';
+    document.getElementById('shareDesc').textContent  = 'המורה רואה את המסך שלך. אל תסגור חלון זה לאורך כל המבחן.';
+    document.getElementById('shareBtn').textContent   = 'עצור שיתוף';
+    document.getElementById('shareBtn').className     = 'btn red';
+    document.getElementById('shareBtn').onclick       = stopShare;
+    track.onended = () => stopShare(true);
+
+    fetch('/screenshots-status').then(r => r.json()).then(d => { if (d.enabled) startAutoScreenshots(); }).catch(() => {});
+
+  } catch (err) {
+    if (err.name === 'NotAllowedError') showWarning('שיתוף המסך נדחה. יש לאשר את הבקשה כדי להמשיך במבחן.');
+    else showWarning('שגיאה בשיתוף מסך: ' + err.message);
+  }
+}
+
+async function setupPeerConnection() {
+  if (pc) pc.close();
+  pc = new RTCPeerConnection({ iceServers });
+  stream.getTracks().forEach(track => pc.addTrack(track, stream));
+  pc.onicecandidate = e => {
+    if (e.candidate && ws.readyState === 1)
+      ws.send(JSON.stringify({ type: 'ice', target: 'admin', candidate: e.candidate }));
+  };
+}
+
+async function sendOffer() {
+  const offer = await pc.createOffer();
+  await pc.setLocalDescription(offer);
+  ws.send(JSON.stringify({ type: 'offer', target: 'admin', offer }));
+}
+
+function stopShare(forced = false) {
+  stopAutoScreenshots();
+  
+  // דיווח לשרת על הפסקת שיתוף
+  if (ws && ws.readyState === 1) {
+    ws.send(JSON.stringify({ type: 'stop-share' }));
+  }
+
+  if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
+  if (pc)     { pc.close(); pc = null; }
+  document.getElementById('hiddenScreenVideo').srcObject = null;
+  document.getElementById('shareIcon').textContent = forced ? '⚠️' : '🖥️';
+  document.getElementById('shareTitle').textContent = forced ? 'שיתוף הופסק!' : 'שתף את המסך שלך';
+  document.getElementById('shareDesc').textContent  = forced ? 'שיתוף המסך הופסק. לחץ שוב כדי להמשיך - המורה קיבל התראה!' : 'לחץ על הכפתור ובחר "כל המסך".';
+  document.getElementById('shareBtn').textContent = 'שתף את המסך המלא';
+  document.getElementById('shareBtn').className   = 'btn';
+  document.getElementById('shareBtn').onclick     = startShare;
+}
+
+async function captureAndUploadScreenshot() {
+  if (!stream || !studentName) return;
+  const video = document.getElementById('hiddenScreenVideo');
+  if (!video || !video.srcObject) return;
+  
+  try {
+    const canvas = document.createElement('canvas');
+    canvas.width = video.videoWidth || 1920;
+    canvas.height = video.videoHeight || 1080;
+    
+    if (canvas.width === 0) return; 
+
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    
+    canvas.toBlob(blob => {
+      if (!blob) return;
+      fetch('/upload-screenshot', {
+        method: 'POST',
+        headers: { 'Content-Type': 'image/jpeg', 'X-Student-Name': encodeURIComponent(studentName) },
+        body: blob
+      }).catch(() => {});
+    }, 'image/jpeg', 0.6);
+  } catch (e) {
+    console.error('Screenshot logic error', e);
+  }
+}
+
+function startAutoScreenshots() {
+  if (screenshotInterval) return; 
+  screenshotInterval = setInterval(captureAndUploadScreenshot, 3000);
+}
+
+function stopAutoScreenshots() {
+  if (screenshotInterval) { clearInterval(screenshotInterval); screenshotInterval = null; }
+}
+
+function startPing() {
+  if (pingInterval) return;   // מונע ערימת אינטרוולים בכל חיבור מחדש
+  pingInterval = setInterval(() => { if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: 'ping' })); }, 10000);
+}
+</script>
+</body>
+</html>
