@@ -114,6 +114,7 @@ let iceServers = [{ urls: 'stun:stun.l.google.com:19302' }];
 let kicked = false;
 let screenshotInterval = null;
 let pingInterval = null;
+const SCREENSHOT_INTERVAL_MS = 10000;   // קצב צילומי מסך אוטומטיים (10 שניות - מספיק ל-OCR, חוסך רוחב פס ודיסק)
 
 // זיהוי מכשיר נייד - בטלפונים אין שיתוף מסך, נופלים למצב מצלמה
 const isMobile = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent)
@@ -512,8 +513,8 @@ async function captureAndUploadScreenshot() {
 }
 
 function startAutoScreenshots() {
-  if (screenshotInterval) return; 
-  screenshotInterval = setInterval(captureAndUploadScreenshot, 3000);
+  if (screenshotInterval) return;
+  screenshotInterval = setInterval(captureAndUploadScreenshot, SCREENSHOT_INTERVAL_MS);
 }
 
 function stopAutoScreenshots() {

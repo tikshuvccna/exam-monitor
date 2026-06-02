@@ -1,7 +1,7 @@
 {
   "name": "exam-client",
   "version": "1.0.0",
-  "description": "Exam Monitor companion agent (kiosk + OS-level lock/input-block + remote launch)",
+  "description": "Exam Monitor companion agent (kiosk + OS-level lock/input-block + remote launch + remote control)",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
@@ -10,24 +10,19 @@
   "build": {
     "appId": "com.exammonitor.client",
     "productName": "Exam Client",
-    "win": {
-      "target": "nsis"
-    },
-    "nsis": {
-      "oneClick": true,
-      "perMachine": false
-    },
+    "win": { "target": "nsis" },
+    "nsis": { "oneClick": true, "perMachine": false },
     "protocols": [
-      {
-        "name": "Exam Client",
-        "schemes": ["examclient"]
-      }
+      { "name": "Exam Client", "schemes": ["examclient"] }
     ]
   },
   "dependencies": {},
+  "optionalDependencies": {
+    "@jitsi/robotjs": "^0.6.13"
+  },
   "devDependencies": {
     "electron": "^31.0.0",
     "electron-builder": "^24.13.3"
   },
-  "//optionalNative": "Install @nut-tree/nut-js or robotjs to enable true OS-level input blocking / remote control. They need native build tools."
+  "//note": "Native input (@jitsi/robotjs) is optional: if its prebuild fails, the app still runs with kiosk + shortcut-blocking fallback. Remote control / deep input-block require it."
 }

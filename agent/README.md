@@ -28,6 +28,19 @@ The server's `/download-agent` route auto-serves whatever `.exe` lands in `agent
 > ⚠️ Native build tools (a recent Node + Windows Build Tools) are required for
 > `electron-builder`. The first `npm install` downloads Electron (~100 MB).
 
+## Run it in dev
+```powershell
+cd agent
+npm start
+```
+This opens the kiosk window pointed at `EXAM_URL`. Verified working: the detect
+server answers `GET http://127.0.0.1:7345/ping` → `{"app":"exam-client","nativeInput":true}`.
+
+> ⚠️ **If you see "יש להריץ דרך electron ולא node":** the env var
+> `ELECTRON_RUN_AS_NODE=1` is set, which forces Electron into plain-Node mode.
+> Unset it (`Remove-Item Env:\ELECTRON_RUN_AS_NODE`) and run again. Normal PCs
+> don't have it set.
+
 ## Point it at your server
 Set the exam URL before building, or via env at runtime:
 ```powershell
