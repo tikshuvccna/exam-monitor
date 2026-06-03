@@ -157,6 +157,7 @@
   <button id="broadcastBtn" onclick="toggleBroadcast()">📡 שתף מסך לכולם</button>
   <button class="secondary" onclick="sendMessage()">✉️ הודעה</button>
   <button class="secondary" onclick="broadcastCountdown()">⏳ שדר ספירה</button>
+  <button class="secondary" onclick="setExamUrl()">🌐 הטמע אתר מבחן</button>
   <button class="secondary" onclick="control('screen-lock', true)">🔒 נעל</button>
   <button class="secondary" onclick="control('screen-lock', false)">🔓 שחרר</button>
   <button class="secondary" onclick="control('input-block', true)">⌨️ חסום קלט</button>
@@ -673,6 +674,13 @@ function sendMessage() {
 function endExam() {
   if (!confirm('לסיים את המבחן ולשחרר את כל התלמידים? אפליקציית הפיקוח תיסגר אצלם.')) return;
   ws.send(JSON.stringify({ type:'control', action:'end-exam', target:'all' }));
+}
+
+// Option B: שידור כתובת אתר המבחן להטמעה אצל התלמידים
+function setExamUrl() {
+  const url = prompt('הדבק את כתובת אתר המבחן (למשל קישור לטופס):', 'https://');
+  if (!url || url === 'https://') return;
+  ws.send(JSON.stringify({ type:'control', action:'exam-url', target:'all', url }));
 }
 
 function broadcastCountdown() {

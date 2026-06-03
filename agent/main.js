@@ -63,6 +63,28 @@ function loadNativeInput() {
   }
 }
 
+// ── שכבת-על שולחנית (Option A) ─────────────────────────────────
+// חלון שקוף, תמיד-עליון, שקוף-ללחיצות, שמרחף מעל כל אתר/אפליקציה.
+// כאן מוצגים הטיימר וההודעות מהמורה - גם כשהתלמיד נמצא באתר מבחן חיצוני.
+let overlay = null;
+function createOverlay() {
+  const { width, height } = screen.getPrimaryDisplay().workAreaSize;
+  overlay = new BrowserWindow({
+    width, height, x: 0, y: 0,
+    transparent: true, frame: false, resizable: false, movable: false,
+    focusable: false, skipTaskbar: true, alwaysOnTop: true, hasShadow: false,
+    webPreferences: { contextIsolation: true, preload: path.join(__dirname, 'overlay-preload.js') },
+  });
+  overlay.setIgnoreMouseEvents(true);                  // שקוף ללחיצות - לא חוסם את המבחן
+  overlay.setAlwaysOnTop(true, 'screen-saver');
+  overlay.setVisibleOnAllWorkspaces(true);
+  overlay.loadFile(path.join(__dirname, 'overlay.html'));
+  overlay.on('closed', () => { overlay = null; });
+}
+function overlaySend(channel, data) {
+  if (overlay && overlay.webContents) overlay.webContents.send(channel, data);
+}
+
 // ── 1. חלון kiosk ───────────────────────────────────────────────
 function createWindow() {
   win = new BrowserWindow({
@@ -300,6 +322,8 @@ let quitting = false;
 function doQuit() {
   quitting = true;
   globalShortcut.unregisterAll();
+  stopCheatDetection();
+  if (overlay) { overlay.destroy(); overlay = null; }
   if (win) { win.setKiosk(false); win.destroy(); win = null; }
   app.quit();
 }
@@ -357,6 +381,9 @@ ipcMain.on('show-setup', () => showSetupPage());
 // דף התלמיד מוסר את טקסט השאלות (לזיהוי "הועתקה שאלה") ומפעיל/מכבה גילוי
 ipcMain.on('set-question-text', (e, txt) => { examQuestionText = (txt || '').slice(0, 5000); });
 ipcMain.on('cheat-detection', (e, on) => { on ? startCheatDetection() : stopCheatDetection(); });
+// הודעה/טיימר מהמורה -> מוצגים בשכבת-העל מעל כל אתר
+ipcMain.on('overlay-message',   (e, text)  => overlaySend('show-message', text));
+ipcMain.on('overlay-countdown', (e, data)  => overlaySend('set-countdown', data));
 
 // ── אתחול ──────────────────────────────────────────────────────
 app.whenReady().then(() => {
@@ -365,6 +392,7 @@ app.whenReady().then(() => {
   registerExitHotkeys();
   registerScreenshotInterception();
   createWindow();
+  createOverlay();         // שכבת-על לטיימר/הודעות מעל כל אתר
   startCheatDetection();   // גילוי פעיל כל עוד האפליקציה רצה
   handleProtocol(process.argv.find(a => a.startsWith('examclient://')));
 });

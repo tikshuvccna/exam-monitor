@@ -21,6 +21,9 @@ contextBridge.exposeInMainWorld('examAgent', {
   onCheat: (cb) => ipcRenderer.on('ai-cheat', (e, data) => cb(data)),
   // מסירת טקסט שאלות המבחן (לזיהוי "הועתקה שאלה")
   setQuestionText: (txt) => ipcRenderer.send('set-question-text', txt),
+  // הודעה/טיימר -> שכבת-על מעל כל אתר (Option A)
+  overlayMessage:   (text) => ipcRenderer.send('overlay-message', text),
+  overlayCountdown: (data) => ipcRenderer.send('overlay-countdown', data),
 });
 
 // ── באנר שקיפות: התלמיד תמיד רואה שהמכשיר בפיקוח ──────────────

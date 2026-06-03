@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html dir="rtl"><head><meta charset="UTF-8">
+<style>
+  html,body{margin:0;height:100%;width:100%;background:transparent;overflow:hidden;font-family:'Segoe UI',sans-serif;}
+  /* כל אלמנט שקוף ללחיצות כברירת מחדל (החלון כולו setIgnoreMouseEvents) */
+  #msg{
+    position:fixed;top:0;left:0;right:0;
+    background:#3b82f6;color:#fff;font-weight:700;font-size:18px;
+    text-align:center;padding:14px;display:none;
+    box-shadow:0 4px 24px rgba(0,0,0,.5);
+  }
+  #cd{
+    position:fixed;top:14px;left:50%;transform:translateX(-50%);
+    background:rgba(15,23,42,.92);color:#fcd34d;font-family:'Consolas',monospace;
+    font-size:26px;font-weight:700;padding:8px 22px;border-radius:0 0 12px 12px;
+    display:none;box-shadow:0 4px 20px rgba(0,0,0,.5);border:1px solid #334155;border-top:none;
+  }
+</style></head>
+<body>
+  <div id="msg"></div>
+  <div id="cd"></div>
+<script>
+  let msgTimer = null, cdTimer = null;
+
+  window.examOverlay.onMessage(text => {
+    if (!text) return;
+    const el = document.getElementById('msg');
+    el.textContent = '✉️ ' + text;
+    el.style.display = 'block';
+    clearTimeout(msgTimer);
+    msgTimer = setTimeout(() => { el.style.display = 'none'; }, 15000);
+  });
+
+  window.examOverlay.onCountdown(d => {
+    const el = document.getElementById('cd');
+    clearInterval(cdTimer);
+    if (!d || !d.on || !d.endsAt) { el.style.display = 'none'; return; }
+    el.style.display = 'block';
+    const tick = () => {
+      const left = Math.max(0, Math.floor((d.endsAt - Date.now()) / 1000));
+      const m = Math.floor(left/60), s = left%60;
+      el.textContent = '⏳ ' + m + ':' + String(s).padStart(2,'0');
+      el.style.color = left <= 60 ? '#ef4444' : '#fcd34d';
+      if (left <= 0) clearInterval(cdTimer);
+    };
+    tick(); cdTimer = setInterval(tick, 1000);
+  });
+</script>
+</body></html>

@@ -445,6 +445,7 @@ wss.on('connection', (ws, req) => {
         'agent-launch': () => ({ type:'agent-launch' }),  // בקשה לפתוח את אפליקציית הנלווית
         'broadcast-end':() => ({ type:'broadcast-end' }), // סגירת שכבת שידור מסך המורה
         'end-exam':     () => ({ type:'end-exam' }),       // סיום מבחן - משחרר ויוצא מהאפליקציה
+        'exam-url':     m => ({ type:'exam-url', url: m.url }), // הטמעת אתר המבחן (Option B)
       };
       const build = ACTIONS[action];
       if (!build) return;
@@ -457,6 +458,7 @@ wss.on('connection', (ws, req) => {
         'agent-launch': '🚀 בקשת הפעלת אפליקציית פיקוח',
         'broadcast-end':'📡 שיתוף מסך המורה הופסק',
         'end-exam':     '🏁 המבחן הסתיים - שוחררו תלמידים',
+        'exam-url':     `🌐 אתר המבחן שודר: ${msg.url || ''}`,
       };
       addLog('info', `${labels[action]} → ${targetLabel(target)} (${count})`);
       return;

@@ -103,6 +103,16 @@
   <video id="broadcastVideo" autoplay playsinline style="max-width:100%;max-height:calc(100vh - 40px);object-fit:contain;"></video>
 </div>
 
+<!-- מצב מבחן מוטמע (Option B): המבחן בתוך הדף, עם טיימר/הודעות מעל -->
+<div id="embedView" style="display:none;position:fixed;inset:0;z-index:7000;background:#0f172a;flex-direction:column;">
+  <div id="embedBar" style="background:#1e293b;color:#e2e8f0;padding:6px 14px;display:flex;align-items:center;gap:14px;font-family:sans-serif;font-size:13px;border-bottom:1px solid #334155;flex-shrink:0;">
+    <span style="color:#00d4aa;font-weight:700;">📝 מבחן</span>
+    <span id="embedMsg" style="flex:1;color:#93c5fd;"></span>
+    <span id="embedCd" style="font-family:monospace;color:#fcd34d;font-weight:700;"></span>
+  </div>
+  <iframe id="embedFrame" style="flex:1;width:100%;border:none;background:#fff;" allow="clipboard-read; clipboard-write; camera; microphone"></iframe>
+</div>
+
 <!-- שכבת נעילת מסך -->
 <div id="lockOverlay" style="display:none;position:fixed;inset:0;z-index:9800;background:#0a0e1a;flex-direction:column;align-items:center;justify-content:center;gap:18px;color:#e2e8f0;font-family:sans-serif;text-align:center;">
   <div style="font-size:64px;">🔒</div>
@@ -278,10 +288,11 @@ async function handleMessage(e) {
   // ── פקודות שליטה מהמורה ──────────────────────────────
   if (msg.type === 'screen-lock')     setLock(msg.on, msg.message);
   if (msg.type === 'input-block')     setInputBlock(msg.on);
-  if (msg.type === 'teacher-message') showTeacherMessage(msg.message);
-  if (msg.type === 'countdown')       setCountdown(msg.on, msg.endsAt);
+  if (msg.type === 'teacher-message') { showTeacherMessage(msg.message); window.examAgent?.overlayMessage?.(msg.message); }
+  if (msg.type === 'countdown')       { setCountdown(msg.on, msg.endsAt);  window.examAgent?.overlayCountdown?.({ on: msg.on, endsAt: msg.endsAt }); }
   if (msg.type === 'agent-launch')    location.href = 'examclient://start';
   if (msg.type === 'end-exam')        endExam();
+  if (msg.type === 'exam-url')        openEmbeddedExam(msg.url);
 
   // ── שידור מסך המורה (broadcast) ──────────────────────
   if (msg.type === 'offer' && msg.subtype === 'broadcast') await handleBroadcastOffer(msg);
@@ -289,6 +300,26 @@ async function handleMessage(e) {
 }
 
 // ════════ פיצ'רים חדשים ════════
+
+// --- Option B: הטמעת אתר המבחן בתוך הדף ---
+let _embedUrl = null;
+function openEmbeddedExam(url) {
+  if (!url) return;
+  _embedUrl = url;
+  const frame = document.getElementById('embedFrame');
+  const view  = document.getElementById('embedView');
+  frame.src = url;
+  view.style.display = 'flex';
+  // אם האתר חוסם הטמעה (X-Frame-Options) - נזהה ונציע פתיחה בכרטיסייה
+  let loaded = false;
+  frame.onload = () => { loaded = true; };
+  setTimeout(() => {
+    if (!loaded) {
+      document.getElementById('embedMsg').innerHTML =
+        '⚠️ אתר המבחן חוסם הטמעה. <a href="'+url+'" target="_blank" style="color:#fcd34d;">פתח בכרטיסייה חדשה</a> (הטיימר/הודעות יופיעו רק באפליקציה).';
+    }
+  }, 3500);
+}
 
 // --- סיום מבחן מהמורה: עוצר שיתוף, ואם רץ באפליקציה - יוצא ממנה ---
 function endExam() {
@@ -337,6 +368,7 @@ function showTeacherMessage(text) {
   el.style.display = 'block';
   clearTimeout(_msgTimer);
   _msgTimer = setTimeout(() => { el.style.display = 'none'; }, 15000);
+  const eb = document.getElementById('embedMsg'); if (eb) eb.textContent = '✉️ ' + text;
 }
 
 // --- ספירה לאחור ---
@@ -346,11 +378,14 @@ function setCountdown(on, endsAt) {
   clearInterval(_cdTimer);
   if (!on || !endsAt) { el.style.display = 'none'; return; }
   el.style.display = 'block';
+  const eb = document.getElementById('embedCd');
   const tick = () => {
     const left = Math.max(0, Math.floor((endsAt - Date.now()) / 1000));
     const m = Math.floor(left / 60), s = left % 60;
-    el.textContent = `⏳ ${m}:${String(s).padStart(2,'0')}`;
+    const txt = `⏳ ${m}:${String(s).padStart(2,'0')}`;
+    el.textContent = txt;
     el.style.color = left <= 60 ? '#ef4444' : '#fcd34d';
+    if (eb) { eb.textContent = txt; eb.style.color = left <= 60 ? '#ef4444' : '#fcd34d'; }
     if (left <= 0) clearInterval(_cdTimer);
   };
   tick(); _cdTimer = setInterval(tick, 1000);
