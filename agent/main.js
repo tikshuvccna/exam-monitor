@@ -183,7 +183,13 @@ function startDetectServer() {
 }
 
 // ── 3. פרוטוקול examclient:// ──────────────────────────────────
-app.setAsDefaultProtocolClient('examclient');
+// רישום נכון: באפליקציה ארוזה - מצביע על ה-exe המותקן. בפיתוח - על
+// electron.exe עם נתיב הפרויקט (אחרת נוצר נתיב שבור system32\examclient:).
+if (app.isPackaged) {
+  app.setAsDefaultProtocolClient('examclient');
+} else if (process.platform === 'win32') {
+  app.setAsDefaultProtocolClient('examclient', process.execPath, [path.resolve(process.argv[1] || '.')]);
+}
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) { app.quit(); }
 else {
