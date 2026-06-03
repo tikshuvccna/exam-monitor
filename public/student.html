@@ -205,6 +205,32 @@ function showAgentPrompt(installed) {
   document.querySelector('.page').insertBefore(box, document.getElementById('loginScreen'));
 }
 
+// המורה ביקש לפתוח את האפליקציה - מציג כפתור (דפדפן חוסם הפעלת פרוטוקול ללא לחיצה אמיתית)
+function promptLaunchApp() {
+  // כבר רץ בתוך האפליקציה - אין צורך
+  if (window.examAgent?.present) { showTeacherMessage('אתה כבר באפליקציית המבחן ✓'); return; }
+  // מסך-על עם כפתור גדול
+  let ov = document.getElementById('launchOverlay');
+  if (ov) { ov.style.display = 'flex'; return; }
+  ov = document.createElement('div');
+  ov.id = 'launchOverlay';
+  ov.style.cssText = 'position:fixed;inset:0;z-index:9700;background:rgba(10,14,26,.96);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;color:#e2e8f0;font-family:Heebo,sans-serif;text-align:center;padding:24px;';
+  ov.innerHTML = `
+    <div style="font-size:48px;">🚀</div>
+    <h2 style="margin:0;">המורה מבקש לפתוח את אפליקציית המבחן</h2>
+    <p style="color:#94a3b8;max-width:420px;">לחץ על הכפתור כדי לפתוח את האפליקציה. אם היא אינה מותקנת - הורד אותה תחילה.</p>
+    <button id="launchBtn" style="background:#00d4aa;color:#000;border:none;border-radius:10px;padding:14px 36px;font-size:17px;font-weight:700;cursor:pointer;">פתח את האפליקציה</button>
+    <a href="/download-agent" style="color:#94a3b8;font-size:13px;">עדיין לא מותקן? הורד את אפליקציית המבחן</a>
+    <button id="launchClose" style="background:transparent;border:1px solid #334155;color:#64748b;border-radius:8px;padding:6px 16px;font-size:12px;cursor:pointer;">סגור</button>`;
+  document.body.appendChild(ov);
+  document.getElementById('launchBtn').onclick = () => {
+    // הלחיצה האמיתית מאפשרת לדפדפן להפעיל את הפרוטוקול
+    window.location.href = 'examclient://start';
+    showTeacherMessage('אם האפליקציה לא נפתחה - ודא שהיא מותקנת');
+  };
+  document.getElementById('launchClose').onclick = () => { ov.style.display = 'none'; };
+}
+
 function connectWS(onOpen) {
   ws = new WebSocket(`wss://${location.host}`);
   ws.onopen = onOpen;
@@ -299,7 +325,7 @@ async function handleMessage(e) {
   if (msg.type === 'input-block')     setInputBlock(msg.on);
   if (msg.type === 'teacher-message') { showTeacherMessage(msg.message); window.examAgent?.overlayMessage?.(msg.message); }
   if (msg.type === 'countdown')       { setCountdown(msg.on, msg.endsAt);  window.examAgent?.overlayCountdown?.({ on: msg.on, endsAt: msg.endsAt }); }
-  if (msg.type === 'agent-launch')    location.href = 'examclient://start';
+  if (msg.type === 'agent-launch')    promptLaunchApp();
   if (msg.type === 'end-exam')        endExam();
   if (msg.type === 'exam-url')        openEmbeddedExam(msg.url);
 
