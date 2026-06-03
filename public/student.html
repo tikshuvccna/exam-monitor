@@ -153,8 +153,12 @@ function showWarning(msg) {
 let agentPresent = false;
 // בדיקה אם אפליקציית הפיקוח מותקנת ופועלת (מאזינה על localhost)
 function detectAgent() {
-  return fetch('http://127.0.0.1:7345/ping', { mode:'cors' })
-    .then(r => r.ok).catch(() => false);
+  // אם רצים בתוך האפליקציה - הגשר קיים ישירות
+  if (window.examAgent?.present) return Promise.resolve(true);
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), 1500);   // לא תוקע את הדף אם אין מענה
+  return fetch('http://127.0.0.1:7345/ping', { mode:'cors', signal: ctrl.signal })
+    .then(r => r.ok).catch(() => false).finally(() => clearTimeout(t));
 }
 
 window.addEventListener('load', async () => {
@@ -163,7 +167,7 @@ window.addEventListener('load', async () => {
   document.getElementById('nameInput').addEventListener('keydown', e => { if (e.key === 'Enter') joinExam(); });
 
   agentPresent = await detectAgent();
-  if (!agentPresent && !isMobile) showAgentPrompt();   // אפליקציית הפיקוח היא לשולחן עבודה בלבד
+  if (!isMobile) showAgentPrompt(agentPresent);   // תמיד מציג קישור הורדה (עם הערה אם כבר מותקן)
 
   // מסירה לאפליקציה את טקסט הדף (לזיהוי "הועתקה שאלת המבחן")
   if (window.examAgent?.setQuestionText) {
@@ -184,15 +188,20 @@ function adaptMobileUI() {
   if (rules) rules.innerHTML = 'עליך לשתף את <strong>מצלמת הטלפון</strong> לאורך כל המבחן, עם תאורה טובה.';
 }
 
-// כפתור הורדת אפליקציית הפיקוח (Option B) - מוצג רק אם אינה מותקנת
-function showAgentPrompt() {
+// כפתור הורדת אפליקציית הפיקוח - מוצג תמיד (עם הערה אם כבר מותקן)
+function showAgentPrompt(installed) {
+  if (document.getElementById('agentBox')) return;   // למנוע כפילות
   const box = document.createElement('div');
+  box.id = 'agentBox';
   box.className = 'allowed-box';
   box.style.cssText = 'display:flex;flex-direction:column;gap:8px;align-items:center;';
+  const note = installed
+    ? `<div style="color:#00d4aa;font-weight:700;">✓ אפליקציית המבחן מותקנת ופועלת</div>`
+    : `<div>למצב פיקוח מלא מומלץ להתקין את אפליקציית המבחן (פעם אחת).</div>`;
   box.innerHTML = `
-    <div>למצב פיקוח מלא מומלץ להתקין את אפליקציית המבחן (פעם אחת).</div>
+    ${note}
     <a href="/download-agent" style="background:#00d4aa;color:#000;padding:8px 18px;border-radius:8px;font-weight:700;text-decoration:none;">⬇ הורד אפליקציית מבחן</a>
-    <div style="font-size:11px;color:#64748b;">אפשר להמשיך גם בלי - בפיקוח בסיסי דרך הדפדפן.</div>`;
+    <div style="font-size:11px;color:#64748b;">${installed ? 'הקישור זמין למקרה שצריך להתקין מחדש.' : 'אפשר להמשיך גם בלי - בפיקוח בסיסי דרך הדפדפן.'}</div>`;
   document.querySelector('.page').insertBefore(box, document.getElementById('loginScreen'));
 }
 
