@@ -171,7 +171,7 @@ function showErrorPage(msg) {
 
 // ── 2. שרת זיהוי מקומי ─────────────────────────────────────────
 function startDetectServer() {
-  http.createServer((req, res) => {
+  const srv = http.createServer((req, res) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
     if (req.url === '/ping') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -179,7 +179,13 @@ function startDetectServer() {
       return;
     }
     res.writeHead(404); res.end();
-  }).listen(DETECT_PORT, '127.0.0.1', () => console.log(`detect server on 127.0.0.1:${DETECT_PORT}`));
+  });
+  // אם הפורט תפוס (מופע אחר כבר רץ) - לא מקריסים את האפליקציה, רק מתעלמים
+  srv.on('error', err => {
+    if (err.code === 'EADDRINUSE') console.log('detect server: port in use (instance already running) - skipping');
+    else console.error('detect server error:', err.message);
+  });
+  srv.listen(DETECT_PORT, '127.0.0.1', () => console.log(`detect server on 127.0.0.1:${DETECT_PORT}`));
 }
 
 // ── 3. פרוטוקול examclient:// ──────────────────────────────────
@@ -191,13 +197,16 @@ if (app.isPackaged) {
   app.setAsDefaultProtocolClient('examclient', process.execPath, [path.resolve(process.argv[1] || '.')]);
 }
 const gotLock = app.requestSingleInstanceLock();
-if (!gotLock) { app.quit(); }
-else {
-  app.on('second-instance', (e, argv) => {
-    if (win) { win.show(); win.focus(); }
-    handleProtocol(argv.find(a => a.startsWith('examclient://')));
-  });
+if (!gotLock) {
+  // מופע שני (למשל לחיצה נוספת על "הפעל אפליקציה") - יוצא מיד.
+  // המופע הראשון יקבל 'second-instance' ויביא את עצמו לקדמת הבמה.
+  app.quit();
+  process.exit(0);
 }
+app.on('second-instance', (e, argv) => {
+  if (win) { if (win.isMinimized()) win.restore(); win.show(); win.focus(); }
+  handleProtocol(argv.find(a => a.startsWith('examclient://')));
+});
 function handleProtocol(url) {
   if (!url) return;
   const action = url.replace('examclient://', '').replace(/\/$/, '');
