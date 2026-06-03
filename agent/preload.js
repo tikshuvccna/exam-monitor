@@ -24,6 +24,9 @@ contextBridge.exposeInMainWorld('examAgent', {
   // הודעה/טיימר -> שכבת-על מעל כל אתר (Option A)
   overlayMessage:   (text) => ipcRenderer.send('overlay-message', text),
   overlayCountdown: (data) => ipcRenderer.send('overlay-countdown', data),
+  // פתיחת/סגירת אתר המבחן בתצוגה אמיתית (לא iframe)
+  openExam:  (url) => ipcRenderer.send('open-exam', url),
+  closeExam: () => ipcRenderer.send('close-exam'),
 });
 
 // ── באנר שקיפות: התלמיד תמיד רואה שהמכשיר בפיקוח ──────────────

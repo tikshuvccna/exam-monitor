@@ -8,7 +8,7 @@
 // ------------------------------------------------------------------
 
 const electron = require('electron');
-const { app, BrowserWindow, globalShortcut, ipcMain, screen, desktopCapturer, session } = electron;
+const { app, BrowserWindow, BrowserView, globalShortcut, ipcMain, screen, desktopCapturer, session } = electron;
 const http = require('http');
 const path = require('path');
 const fs   = require('fs');
@@ -83,6 +83,28 @@ function createOverlay() {
 }
 function overlaySend(channel, data) {
   if (overlay && overlay.webContents) overlay.webContents.send(channel, data);
+}
+
+// ── תצוגת המבחן (אתר אמיתי, לא iframe) ─────────────────────────
+// BrowserView שמכסה את חלון ה-kiosk אך משאיר את student.html חי מתחתיו -
+// כך שיתוף המסך והקשר לשרת ממשיכים לרוץ ברקע בזמן שהתלמיד עושה את המבחן.
+let examView = null;
+function openExamView(url) {
+  if (!url || !win) return;
+  if (!examView) {
+    examView = new BrowserView({ webPreferences: { contextIsolation: true } });
+    examView.webContents.session.setCertificateVerifyProc((req, cb) => cb(0));
+    win.addBrowserView(examView);
+  }
+  const b = win.getBounds();
+  examView.setBounds({ x: 0, y: 0, width: b.width, height: b.height });
+  examView.setAutoResize({ width: true, height: true });
+  examView.webContents.loadURL(url);
+  // שמירה על סדר השכבות: overlay (טיימר/הודעות) תמיד למעלה
+  if (overlay) overlay.setAlwaysOnTop(true, 'screen-saver');
+}
+function closeExamView() {
+  if (examView && win) { win.removeBrowserView(examView); examView.webContents.destroy(); examView = null; }
 }
 
 // ── 1. חלון kiosk ───────────────────────────────────────────────
@@ -399,6 +421,9 @@ ipcMain.on('cheat-detection', (e, on) => { on ? startCheatDetection() : stopChea
 // הודעה/טיימר מהמורה -> מוצגים בשכבת-העל מעל כל אתר
 ipcMain.on('overlay-message',   (e, text)  => overlaySend('show-message', text));
 ipcMain.on('overlay-countdown', (e, data)  => overlaySend('set-countdown', data));
+// פתיחת אתר המבחן בתצוגה אמיתית מעל student.html (שנשאר חי לניטור)
+ipcMain.on('open-exam', (e, url) => openExamView(url));
+ipcMain.on('close-exam', () => closeExamView());
 
 // ── אתחול ──────────────────────────────────────────────────────
 app.whenReady().then(() => {

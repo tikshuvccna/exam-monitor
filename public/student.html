@@ -336,11 +336,18 @@ async function handleMessage(e) {
 
 // ════════ פיצ'רים חדשים ════════
 
-// --- Option B: הטמעת אתר המבחן בתוך הדף ---
+// --- פתיחת אתר המבחן ---
 let _embedUrl = null;
 function openEmbeddedExam(url) {
   if (!url) return;
   _embedUrl = url;
+  // באפליקציה: פתיחה אמיתית מעל הדף (נטען כרגיל, לא לבן). הניטור ממשיך ברקע.
+  if (window.examAgent?.openExam) {
+    window.examAgent.openExam(url);
+    setStatus('המבחן נפתח - בהצלחה!', 'green');
+    return;
+  }
+  // דפדפן בלבד: ניסיון הטמעה ב-iframe (אתרים רבים חוסמים זאת)
   const frame = document.getElementById('embedFrame');
   const view  = document.getElementById('embedView');
   frame.src = url;
@@ -362,6 +369,7 @@ function endExam() {
   stopAutoScreenshots();
   setLock(false);
   document.getElementById('lockOverlay').style.display = 'none';
+  window.examAgent?.closeExam?.();   // סגירת תצוגת אתר המבחן
   showTeacherMessage('המבחן הסתיים. תודה!');
   if (window.examAgent?.quit) setTimeout(() => window.examAgent.quit(), 2500);
 }
