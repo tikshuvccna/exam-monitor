@@ -13,6 +13,10 @@ contextBridge.exposeInMainWorld('examAgent', {
   remoteInput: (ev) => ipcRenderer.send('agent-remote-input', ev),
   // יציאה מהאפליקציה (סיום מבחן מהמורה)
   quit: () => ipcRenderer.send('agent-quit'),
+  // ניהול כתובת שרת / טעינה מחדש (משמש את מסכי ההגדרה והשגיאה)
+  setServer: (url) => ipcRenderer.send('set-server', url),
+  reloadExam: () => ipcRenderer.send('reload-exam'),
+  showSetup: () => ipcRenderer.send('show-setup'),
 });
 
 // ── באנר שקיפות: התלמיד תמיד רואה שהמכשיר בפיקוח ──────────────

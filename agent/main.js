@@ -11,6 +11,7 @@ const electron = require('electron');
 const { app, BrowserWindow, globalShortcut, ipcMain, screen, desktopCapturer, session } = electron;
 const http = require('http');
 const path = require('path');
+const fs   = require('fs');
 
 // אם electron מורץ ישירות עם node (לא דרך הבינארי) - app יהיה undefined
 if (!app) {
@@ -18,10 +19,33 @@ if (!app) {
   process.exit(1);
 }
 
-const EXAM_URL    = process.env.EXAM_URL || 'https://localhost:4555/student.html';
 const DETECT_PORT = 7345;
 const EXIT_PASSWORD = process.env.EXAM_EXIT_PASS || 'examexit';   // סיסמת יציאה שהמורה מוסר
 
+// ── כתובת שרת המבחן ───────────────────────────────────────────
+// סדר עדיפויות: env > config שמור > ברירת מחדל. נשמר בין הפעלות.
+const CONFIG_FILE = path.join(app.getPath('userData'), 'exam-config.json');
+function loadExamUrl() {
+  if (process.env.EXAM_URL) return process.env.EXAM_URL;
+  try { return JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8')).examUrl || ''; }
+  catch { return ''; }
+}
+function saveExamUrl(url) {
+  try { fs.writeFileSync(CONFIG_FILE, JSON.stringify({ examUrl: url })); } catch {}
+}
+// משלים נתיב מלא מכתובת/IP שהמורה מוסר (למשל "192.168.1.50")
+function normalizeUrl(raw) {
+  let u = (raw || '').trim();
+  if (!u) return '';
+  if (!/^https?:\/\//i.test(u)) u = 'https://' + u;
+  if (!/\/student\.html/i.test(u) && !/\.html/i.test(u)) {
+    if (!/:\d+/.test(u)) u += ':4555';
+    u = u.replace(/\/+$/, '') + '/student.html';
+  }
+  return u;
+}
+
+let examUrl = loadExamUrl();
 let win = null;
 let inputLocked = false;
 
@@ -66,8 +90,61 @@ function createWindow() {
     }).catch(() => callback({}));
   }, { useSystemPicker: false });
 
-  win.loadURL(EXAM_URL);
+  // אם נכשלת טעינת דף המבחן - מציגים מסך שגיאה ידידותי במקום מסך ריק נעול
+  win.webContents.on('did-fail-load', (e, code, desc, url) => {
+    if (code === -3) return; // ABORTED - לא רלוונטי
+    if (url && url.startsWith('data:')) return; // המסכים הפנימיים שלנו
+    showErrorPage(desc || `קוד שגיאה ${code}`);
+  });
+
+  loadExam();
   win.on('closed', () => { win = null; });
+}
+
+// טוען את דף המבחן, או מסך הגדרת-שרת אם אין כתובת
+function loadExam() {
+  if (!examUrl) { showSetupPage(); return; }
+  win.loadURL(examUrl);
+}
+
+// מסך הגדרת כתובת שרת (הפעלה ראשונה / שינוי)
+function showSetupPage(currentErr) {
+  const html = `<!DOCTYPE html><html dir="rtl"><head><meta charset="UTF-8"></head>
+  <body style="font-family:sans-serif;background:#0f172a;color:#e2e8f0;display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;gap:14px;margin:0;">
+    <div style="font-size:40px;">🖥️</div>
+    <h2 style="margin:0;">הגדרת שרת המבחן</h2>
+    <p style="color:#94a3b8;font-size:14px;margin:0;text-align:center;max-width:420px;">הזן את כתובת ה-IP של מחשב המורה (מופיעה בדף המורה).<br>לדוגמה: <b>192.168.1.50</b></p>
+    ${currentErr ? `<p style="color:#ef4444;font-size:13px;">${currentErr}</p>` : ''}
+    <input id="srv" placeholder="כתובת השרת / IP" style="width:300px;padding:10px;border-radius:8px;border:1px solid #334155;background:#1e293b;color:#fff;text-align:center;font-size:15px;">
+    <button onclick="save()" style="padding:10px 28px;border:none;border-radius:8px;background:#00d4aa;font-weight:700;cursor:pointer;font-size:15px;">המשך למבחן</button>
+    <button onclick="quit()" style="padding:6px 18px;border:1px solid #334155;border-radius:8px;background:transparent;color:#94a3b8;cursor:pointer;font-size:12px;">יציאה</button>
+    <script>
+      function save(){ const v=document.getElementById('srv').value.trim(); if(v) window.examAgent.setServer(v); }
+      function quit(){ window.examAgent.quit(); }
+      document.getElementById('srv').addEventListener('keydown',e=>{if(e.key==='Enter')save();});
+    </script></body></html>`;
+  win.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html));
+}
+
+// מסך שגיאת טעינה - תמיד עם דרך החוצה
+function showErrorPage(msg) {
+  const html = `<!DOCTYPE html><html dir="rtl"><head><meta charset="UTF-8"></head>
+  <body style="font-family:sans-serif;background:#0f172a;color:#e2e8f0;display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;gap:14px;margin:0;">
+    <div style="font-size:44px;">⚠️</div>
+    <h2 style="margin:0;">לא ניתן להתחבר לשרת המבחן</h2>
+    <p style="color:#94a3b8;font-size:13px;max-width:440px;text-align:center;">${msg}</p>
+    <p style="color:#64748b;font-size:12px;">בדוק שמחשב המורה פועל ושאתה מחובר לאותה רשת.</p>
+    <div style="display:flex;gap:10px;">
+      <button onclick="retry()" style="padding:10px 24px;border:none;border-radius:8px;background:#00d4aa;font-weight:700;cursor:pointer;">נסה שוב</button>
+      <button onclick="setup()" style="padding:10px 24px;border:1px solid #334155;border-radius:8px;background:transparent;color:#e2e8f0;cursor:pointer;">שנה כתובת שרת</button>
+      <button onclick="quit()" style="padding:10px 24px;border:1px solid #7f1d1d;border-radius:8px;background:transparent;color:#fca5a5;cursor:pointer;">יציאה</button>
+    </div>
+    <script>
+      function retry(){ window.examAgent.reloadExam(); }
+      function setup(){ window.examAgent.showSetup(); }
+      function quit(){ window.examAgent.quit(); }
+    </script></body></html>`;
+  win.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html));
 }
 
 // ── 2. שרת זיהוי מקומי ─────────────────────────────────────────
@@ -188,6 +265,9 @@ ipcMain.on('agent-lock-input', (e, on) => setLock(!!on));
 ipcMain.handle('agent-info', () => ({ nativeInput: !!nativeInput, version: app.getVersion() }));
 ipcMain.on('agent-remote-input', (e, ev) => replayInput(ev));
 ipcMain.on('agent-quit', () => doQuit());
+ipcMain.on('set-server', (e, raw) => { examUrl = normalizeUrl(raw); saveExamUrl(examUrl); loadExam(); });
+ipcMain.on('reload-exam', () => loadExam());
+ipcMain.on('show-setup', () => showSetupPage());
 
 // ── אתחול ──────────────────────────────────────────────────────
 app.whenReady().then(() => {

@@ -41,12 +41,22 @@ server answers `GET http://127.0.0.1:7345/ping` → `{"app":"exam-client","nativ
 > Unset it (`Remove-Item Env:\ELECTRON_RUN_AS_NODE`) and run again. Normal PCs
 > don't have it set.
 
-## Point it at your server
-Set the exam URL before building, or via env at runtime:
-```powershell
-$env:EXAM_URL = "https://192.168.1.50:4555/student.html"; npm start
-```
-Default is `https://localhost:4555/student.html`.
+## Point it at your server (IMPORTANT)
+On a **student** PC, `localhost` means the student's own machine — not the teacher's.
+So the agent must be told the **teacher's IP**. There are three ways, in priority order:
+
+1. **First-run prompt (default):** on first launch the app shows a "הגדרת שרת המבחן"
+   screen. The student types the teacher's IP (e.g. `192.168.1.50`) — the app fills in
+   the rest (`https://192.168.1.50:4555/student.html`) and **remembers it** for next time
+   (saved in `%APPDATA%/exam-client/exam-config.json`).
+2. **Env var (for testing / scripted deploy):**
+   ```powershell
+   $env:EXAM_URL = "https://192.168.1.50:4555/student.html"; npm start
+   ```
+3. **Pre-seed the config** during IT deployment by writing `exam-config.json`.
+
+If the exam page fails to load, the app shows a friendly **error screen** with
+**Retry / Change server / Exit** — the student is never trapped on a blank page.
 
 ## Making lock/input-block & remote control "real" (next step)
 `main.js → lockInput()` currently blocks shortcuts via Electron `globalShortcut`. For a
