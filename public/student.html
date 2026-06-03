@@ -74,6 +74,7 @@
     <h1 id="shareTitle">שתף את המסך שלך</h1>
     <p class="sub" id="shareDesc">לחץ על הכפתור, בחר <strong>"כל המסך"</strong> ולחץ שתף.<br>אל תבחר חלון ספציפי!</p>
     <button class="btn" onclick="startShare()" id="shareBtn">שתף את המסך המלא</button>
+    <button class="btn" onclick="changeName()" id="changeNameBtn" style="background:transparent;color:var(--text2);border:1px solid var(--border);margin-top:10px;font-weight:400;">↩ שם שגוי? לחץ לשינוי</button>
   </div>
 
   <div class="kicked-box" id="kickedBox">
@@ -209,6 +210,33 @@ function rejoin() {
   ws.send(JSON.stringify({ type: 'student-join', name: studentName }));
 }
 
+// חזרה למסך הכניסה לתיקון שם שגוי
+function changeName() {
+  if (!confirm('לחזור ולשנות את השם? השיתוף הנוכחי ייעצר.')) return;
+  // עצירת שיתוף/מצלמה אם פעילים
+  if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
+  if (pc) { pc.close(); pc = null; }
+  stopAutoScreenshots();
+  // ניתוק והודעה לשרת שהתלמיד הנוכחי עוזב (כדי שלא יישאר "רשום")
+  try { if (ws && ws.readyState === 1) { ws.send(JSON.stringify({ type:'leave-rename' })); ws.close(); } } catch {}
+  // איפוס מצב מקומי
+  localStorage.removeItem('examStudentName');
+  studentName = null; studentId = null;
+  document.getElementById('hiddenScreenVideo').srcObject = null;
+  // החזרת מסך הכניסה
+  document.getElementById('shareScreen').style.display = 'none';
+  document.getElementById('loginScreen').style.display = 'block';
+  const btn = document.getElementById('joinBtn');
+  btn.disabled = false;
+  const input = document.getElementById('nameInput');
+  input.value = ''; input.focus();
+  setStatus('הכנס שם מחדש', 'yellow');
+  // איפוס טקסט מסך השיתוף לפעם הבאה
+  document.getElementById('shareBtn').textContent = (shareMode === 'camera') ? 'שתף מצלמה' : 'שתף את המסך המלא';
+  document.getElementById('shareBtn').className = 'btn';
+  document.getElementById('shareBtn').onclick = startShare;
+}
+
 async function handleMessage(e) {
   const msg = JSON.parse(e.data);
 
@@ -248,6 +276,7 @@ async function handleMessage(e) {
   if (msg.type === 'teacher-message') showTeacherMessage(msg.message);
   if (msg.type === 'countdown')       setCountdown(msg.on, msg.endsAt);
   if (msg.type === 'agent-launch')    location.href = 'examclient://start';
+  if (msg.type === 'end-exam')        endExam();
 
   // ── שידור מסך המורה (broadcast) ──────────────────────
   if (msg.type === 'offer' && msg.subtype === 'broadcast') await handleBroadcastOffer(msg);
@@ -255,6 +284,16 @@ async function handleMessage(e) {
 }
 
 // ════════ פיצ'רים חדשים ════════
+
+// --- סיום מבחן מהמורה: עוצר שיתוף, ואם רץ באפליקציה - יוצא ממנה ---
+function endExam() {
+  if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
+  stopAutoScreenshots();
+  setLock(false);
+  document.getElementById('lockOverlay').style.display = 'none';
+  showTeacherMessage('המבחן הסתיים. תודה!');
+  if (window.examAgent?.quit) setTimeout(() => window.examAgent.quit(), 2500);
+}
 
 // --- נעילת מסך (גרסת דפדפן) ---
 function setLock(on, message) {
@@ -381,7 +420,8 @@ async function startShare() {
 
     ws.send(JSON.stringify({ type: 'resolution', resolution: `${settings.width}x${settings.height}`, surfaceType: surface }));
 
-    if (surface && surface !== 'monitor') {
+    // באפליקציית הפיקוח המסך המלא נבחר אוטומטית - לא מתריעים על "שיתוף חלקי"
+    if (!window.examAgent && surface && surface !== 'monitor') {
       showWarning('נראה ששיתפת רק חלון או כרטיסיה. אנא עצור ושתף שוב - בחר "כל המסך".');
     }
 

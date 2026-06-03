@@ -8,7 +8,7 @@
 // ------------------------------------------------------------------
 
 const electron = require('electron');
-const { app, BrowserWindow, globalShortcut, ipcMain, screen } = electron;
+const { app, BrowserWindow, globalShortcut, ipcMain, screen, desktopCapturer, session } = electron;
 const http = require('http');
 const path = require('path');
 
@@ -20,6 +20,7 @@ if (!app) {
 
 const EXAM_URL    = process.env.EXAM_URL || 'https://localhost:4555/student.html';
 const DETECT_PORT = 7345;
+const EXIT_PASSWORD = process.env.EXAM_EXIT_PASS || 'examexit';   // סיסמת יציאה שהמורה מוסר
 
 let win = null;
 let inputLocked = false;
@@ -53,6 +54,18 @@ function createWindow() {
   win.setAlwaysOnTop(true, 'screen-saver');
   // אישור אוטומטי של ה-self-signed cert של שרת המבחן
   win.webContents.session.setCertificateVerifyProc((req, cb) => cb(0));
+
+  // ── תיקון getDisplayMedia ב-Electron ──────────────────────────
+  // בדפדפן יש בורר מסך מובנה; ב-Electron חובה לספק handler.
+  // בוחרים אוטומטית את המסך הראשי המלא (התלמיד לא צריך לבחור - וגם
+  // לא יכול "בטעות" לשתף רק חלון, מה שמחזק את הפיקוח).
+  win.webContents.session.setDisplayMediaRequestHandler((request, callback) => {
+    desktopCapturer.getSources({ types: ['screen'] }).then(sources => {
+      if (sources && sources.length) callback({ video: sources[0] });  // המסך הראשי המלא, ללא אודיו
+      else callback({});
+    }).catch(() => callback({}));
+  }, { useSystemPicker: false });
+
   win.loadURL(EXAM_URL);
   win.on('closed', () => { win = null; });
 }
@@ -86,6 +99,7 @@ function handleProtocol(url) {
   if (action === 'start' && !win) createWindow();
   if (action === 'lock')   setLock(true);
   if (action === 'unlock') setLock(false);
+  if (action === 'quit')   doQuit();
 }
 
 // ── 4. נעילה / חסימת קלט אמיתית ────────────────────────────────
@@ -125,15 +139,61 @@ function replayInput(ev) {
   } catch (e) { console.error('replayInput error', e); return false; }
 }
 
+// ── יציאה מבוקרת מהאפליקציה ────────────────────────────────────
+let quitting = false;
+function doQuit() {
+  quitting = true;
+  globalShortcut.unregisterAll();
+  if (win) { win.setKiosk(false); win.destroy(); win = null; }
+  app.quit();
+}
+
+// חלון קטן לבקשת סיסמת יציאה (מוצג מעל ה-kiosk)
+function promptExitPassword() {
+  const dlg = new BrowserWindow({
+    width: 340, height: 180, frame: true, alwaysOnTop: true, resizable: false,
+    parent: win || undefined, modal: true, title: 'יציאה מהמבחן',
+    webPreferences: { nodeIntegration: true, contextIsolation: false },
+  });
+  dlg.setAlwaysOnTop(true, 'screen-saver');
+  const html = `<!DOCTYPE html><html dir="rtl"><body style="font-family:sans-serif;background:#0f172a;color:#e2e8f0;text-align:center;padding:16px;">
+    <p style="font-size:13px;">הזן סיסמת יציאה (מהמורה):</p>
+    <input id="p" type="password" autofocus style="width:90%;padding:8px;border-radius:6px;border:1px solid #334155;background:#1e293b;color:#fff;text-align:center;">
+    <p id="err" style="color:#ef4444;font-size:12px;height:14px;"></p>
+    <button onclick="go()" style="padding:8px 20px;border:none;border-radius:6px;background:#00d4aa;font-weight:700;cursor:pointer;">יציאה</button>
+    <script>
+      const { ipcRenderer } = require('electron');
+      function go(){ ipcRenderer.send('exit-attempt', document.getElementById('p').value); }
+      document.getElementById('p').addEventListener('keydown', e => { if(e.key==='Enter') go(); });
+      ipcRenderer.on('exit-wrong', () => { document.getElementById('err').textContent='סיסמה שגויה'; document.getElementById('p').value=''; });
+    </script></body></html>`;
+  dlg.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html));
+  return dlg;
+}
+
+ipcMain.on('exit-attempt', (e, pass) => {
+  if (pass === EXIT_PASSWORD) doQuit();
+  else e.sender.send('exit-wrong');
+});
+
+function registerExitHotkeys() {
+  // יציאה עם סיסמה (לתלמיד - אם הוקלד שם שגוי / סיום מבחן)
+  globalShortcut.register('Control+Shift+Q', () => { if (!quitting) promptExitPassword(); });
+  // יציאה מהירה ללא סיסמה (לפיקוח חלש / בדיקות)
+  globalShortcut.register('Control+Shift+X', () => { if (!quitting) doQuit(); });
+}
+
 // ── גשר IPC מדף התלמיד (preload חושף window.examAgent) ─────────
 ipcMain.on('agent-lock-input', (e, on) => setLock(!!on));
 ipcMain.handle('agent-info', () => ({ nativeInput: !!nativeInput, version: app.getVersion() }));
 ipcMain.on('agent-remote-input', (e, ev) => replayInput(ev));
+ipcMain.on('agent-quit', () => doQuit());
 
 // ── אתחול ──────────────────────────────────────────────────────
 app.whenReady().then(() => {
   loadNativeInput();
   startDetectServer();
+  registerExitHotkeys();
   createWindow();
   handleProtocol(process.argv.find(a => a.startsWith('examclient://')));
 });

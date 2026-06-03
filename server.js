@@ -444,6 +444,7 @@ wss.on('connection', (ws, req) => {
         'countdown':    m => ({ type:'countdown', endsAt: m.endsAt, on: m.on }),
         'agent-launch': () => ({ type:'agent-launch' }),  // בקשה לפתוח את אפליקציית הנלווית
         'broadcast-end':() => ({ type:'broadcast-end' }), // סגירת שכבת שידור מסך המורה
+        'end-exam':     () => ({ type:'end-exam' }),       // סיום מבחן - משחרר ויוצא מהאפליקציה
       };
       const build = ACTIONS[action];
       if (!build) return;
@@ -455,6 +456,7 @@ wss.on('connection', (ws, req) => {
         'countdown':    msg.on ? '⏳ ספירה לאחור שודרה' : '⏳ ספירה לאחור בוטלה',
         'agent-launch': '🚀 בקשת הפעלת אפליקציית פיקוח',
         'broadcast-end':'📡 שיתוף מסך המורה הופסק',
+        'end-exam':     '🏁 המבחן הסתיים - שוחררו תלמידים',
       };
       addLog('info', `${labels[action]} → ${targetLabel(target)} (${count})`);
       return;
@@ -477,6 +479,19 @@ wss.on('connection', (ws, req) => {
       sendToAdmin({ type: 'expected', count: expectedCount });
       addLog('info', `מספר תלמידים צפוי נקבע ל-${expectedCount}`);
       saveStudentFile();
+      return;
+    }
+
+    // התלמיד חוזר לתקן שם שגוי - מסירים אותו כדי שהשם המתוקן יתחיל נקי
+    if (msg.type === 'leave-rename') {
+      const id = ws._studentId;
+      if (id && students[id]) {
+        const name = students[id].name;
+        delete students[id];
+        ws._studentId = null;
+        sendToAdmin({ type: 'student-remove', id });
+        addLog('info', `✏️ ${name} חזר לתקן את שמו`);
+      }
       return;
     }
 

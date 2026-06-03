@@ -11,6 +11,8 @@ contextBridge.exposeInMainWorld('examAgent', {
   lockInput: (on) => ipcRenderer.send('agent-lock-input', on),
   // השמעת אירוע קלט מהמורה (שליטה מרחוק)
   remoteInput: (ev) => ipcRenderer.send('agent-remote-input', ev),
+  // יציאה מהאפליקציה (סיום מבחן מהמורה)
+  quit: () => ipcRenderer.send('agent-quit'),
 });
 
 // ── באנר שקיפות: התלמיד תמיד רואה שהמכשיר בפיקוח ──────────────

@@ -161,6 +161,7 @@
   <button class="secondary" onclick="control('input-block', true)">⌨️ חסום קלט</button>
   <button class="secondary" onclick="control('input-block', false)">⌨️ שחרר קלט</button>
   <button class="secondary" onclick="control('agent-launch')">🚀 הפעל אפליקציה</button>
+  <button class="secondary" onclick="endExam()" style="border-color:rgba(239,68,68,0.5);color:#fca5a5;">🏁 סיים מבחן</button>
   <span style="color:var(--text2);font-size:11px;">(פעולות חלות על הנבחרים, או על כולם אם אין בחירה)</span>
 </div>
 
@@ -648,6 +649,11 @@ function sendMessage() {
   const text = prompt('הודעה לתלמידים הנבחרים (או לכולם):');
   if (!text) return;
   ws.send(JSON.stringify({ type:'control', action:'message', target:selectedTargets(), message:text }));
+}
+
+function endExam() {
+  if (!confirm('לסיים את המבחן ולשחרר את כל התלמידים? אפליקציית הפיקוח תיסגר אצלם.')) return;
+  ws.send(JSON.stringify({ type:'control', action:'end-exam', target:'all' }));
 }
 
 function broadcastCountdown() {
