@@ -408,7 +408,7 @@ function addLog(type, message) {
 function getStudentList() {
   return Object.values(students).map(s => ({
     id: s.id, name: s.name, ip: s.ip,
-    connectedAt: s.connectedAt, resolution: s.resolution, lastSeen: s.lastSeen,
+    connectedAt: s.connectedAt, resolution: s.resolution, lastSeen: s.lastSeen, usingApp: !!s.usingApp,
   }));
 }
 
@@ -522,21 +522,22 @@ wss.on('connection', (ws, req) => {
       const name = (msg.name || '').trim();
       if (!name) return;
 
+      const usingApp = !!msg.usingApp;
       const existing = Object.values(students).find(s => s.name === name);
       if (existing) {
-        existing.ws = ws; existing.ip = ip; existing.lastSeen = Date.now();
+        existing.ws = ws; existing.ip = ip; existing.lastSeen = Date.now(); existing.usingApp = usingApp;
         ws._studentId = existing.id;
         ws.send(JSON.stringify({ type: 'joined', id: existing.id, name }));
-        addLog('reconnect', `${name} התחבר מחדש (${ip})`);
+        addLog('reconnect', `${name} התחבר מחדש (${ip})${usingApp ? ' 🛡️ באפליקציה' : ' 🌐 בדפדפן'}`);
         recordStudent({ name, ip });
         recordStudentEvent(name, 'התחבר מחדש');
-        sendToAdmin({ type: 'reconnect', student: { id: existing.id, name, ip, connectedAt: existing.connectedAt, resolution: existing.resolution, lastSeen: existing.lastSeen } });
+        sendToAdmin({ type: 'reconnect', student: { id: existing.id, name, ip, connectedAt: existing.connectedAt, resolution: existing.resolution, lastSeen: existing.lastSeen, usingApp } });
       } else {
         const id = idCounter++;
-        students[id] = { id, ws, name, ip, connectedAt: Date.now(), resolution: null, lastSeen: Date.now() };
+        students[id] = { id, ws, name, ip, connectedAt: Date.now(), resolution: null, lastSeen: Date.now(), usingApp };
         ws._studentId = id;
         ws.send(JSON.stringify({ type: 'joined', id, name }));
-        addLog('join', `${name} התחבר (${ip})`);
+        addLog(usingApp ? 'join' : 'warning', `${name} התחבר (${ip})${usingApp ? ' 🛡️ באפליקציה' : ' 🌐 בדפדפן בלבד - לא באפליקציה!'}`);
         recordStudent({ name, ip, resolution: null });
         recordStudentEvent(name, 'התחבר');
         sendToAdmin({ type: 'student-join', student: getStudentList().find(s => s.id === id) });
@@ -591,6 +592,13 @@ wss.on('connection', (ws, req) => {
         'paste':        `📋 ${sname} הדביק טקסט (${msg.length || '?'} תווים)${msg.preview ? ': "'+msg.preview+'"' : ''}`,
         'copy':         `📋 ${sname} העתיק טקסט מהמבחן`,
         'lock-escape':  `🚪 ${sname} עזב את המסך הנעול`,
+        // גילויי AI מהאפליקציה
+        'ai-clip-question': `🤖 ${sname} העתיק את שאלת המבחן ללוח${msg.detail ? ': "'+msg.detail+'"' : ''}`,
+        'ai-clip-text':     `🤖 ${sname} העתיק טקסט ללוח${msg.detail ? ' ('+msg.detail+')' : ''}`,
+        'ai-clip-image':    `📸 ${sname} העתיק תמונה ללוח (צילום מסך?)`,
+        'ai-ai-window':     `🤖🚨 ${sname} פתח כלי בינה מלאכותית${msg.detail ? ': '+msg.detail : ''}`,
+        'ai-snip-tool':     `📸 ${sname} פתח כלי גזירת מסך`,
+        'ai-printscreen':   `📸 ${sname} לחץ על מקש צילום מסך`,
       };
       const text = kinds[msg.kind];
       if (!text) return;

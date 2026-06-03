@@ -17,6 +17,10 @@ contextBridge.exposeInMainWorld('examAgent', {
   setServer: (url) => ipcRenderer.send('set-server', url),
   reloadExam: () => ipcRenderer.send('reload-exam'),
   showSetup: () => ipcRenderer.send('show-setup'),
+  // גילוי שימוש ב-AI: דף התלמיד נרשם לקבלת אירועי חשד
+  onCheat: (cb) => ipcRenderer.on('ai-cheat', (e, data) => cb(data)),
+  // מסירת טקסט שאלות המבחן (לזיהוי "הועתקה שאלה")
+  setQuestionText: (txt) => ipcRenderer.send('set-question-text', txt),
 });
 
 // ── באנר שקיפות: התלמיד תמיד רואה שהמכשיר בפיקוח ──────────────

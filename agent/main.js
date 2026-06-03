@@ -216,6 +216,85 @@ function replayInput(ev) {
   } catch (e) { console.error('replayInput error', e); return false; }
 }
 
+// ════════ גילוי שימוש בכלי AI (רמת מערכת ההפעלה) ════════
+// כל אלו לא אפשריים מדף דפדפן - רק מהאפליקציה.
+const { clipboard } = electron;
+const { exec } = require('child_process');
+
+let detectTimer = null;
+let lastClipText = '';
+let lastClipImageEmpty = true;
+let examQuestionText = '';   // טקסט שאלות המבחן (לזיהוי העתקת שאלה) - מוזרק מדף התלמיד
+
+// שמות תהליכים/כותרות חלון שמעידים על כלי AI או צילום מסך
+const AI_PATTERNS = [
+  /chatgpt/i, /openai/i, /\bclaude\b/i, /anthropic/i, /gemini/i, /copilot/i,
+  /perplexity/i, /poe\.com/i, /bard/i, /you\.com/i,
+];
+const SNIP_PATTERNS = [ /snipping ?tool/i, /screensketch/i, /screenclip/i, /גזירה/ ];
+
+function flagCheat(kind, detail) {
+  // שולח לדף התלמיד, שמעביר לשרת ומציג אזהרה
+  if (win && win.webContents) win.webContents.send('ai-cheat', { kind, detail });
+}
+
+// 1) ניטור לוח (clipboard) - טקסט ותמונות
+function checkClipboard() {
+  try {
+    const txt = clipboard.readText() || '';
+    if (txt && txt !== lastClipText) {
+      lastClipText = txt;
+      // האם הועתק טקסט שאלת המבחן?
+      if (examQuestionText && txt.length > 25 && questionOverlap(txt)) {
+        flagCheat('clip-question', txt.slice(0, 60));
+      } else if (txt.length > 0) {
+        flagCheat('clip-text', `${txt.length} תווים: ${txt.slice(0, 50)}`);
+      }
+    }
+    // תמונה בלוח = סימן חזק ל-Win+Shift+S / PrintScreen
+    const img = clipboard.readImage();
+    const empty = img.isEmpty();
+    if (!empty && lastClipImageEmpty) flagCheat('clip-image', 'תמונה הועתקה ללוח (צילום מסך?)');
+    lastClipImageEmpty = empty;
+  } catch {}
+}
+
+// חפיפה גסה בין טקסט שהועתק לטקסט שאלות המבחן
+function questionOverlap(txt) {
+  const norm = s => s.toLowerCase().replace(/\s+/g, ' ').trim();
+  const q = norm(examQuestionText), t = norm(txt);
+  if (!q) return false;
+  // אם קטע של 25 תווים מהטקסט מופיע בשאלות
+  return q.includes(t.slice(0, 25)) || t.length > 40 && q.includes(t.slice(0, 40));
+}
+
+// 2) ניטור חלון פעיל - האם כלי AI / snipping tool בקדמת הבמה
+function checkActiveWindow() {
+  // PowerShell: כותרת החלון הפעיל + שם התהליך
+  const ps = `Add-Type @'
+using System;using System.Runtime.InteropServices;using System.Text;
+public class W{[DllImport("user32.dll")]public static extern IntPtr GetForegroundWindow();
+[DllImport("user32.dll")]public static extern int GetWindowText(IntPtr h,StringBuilder s,int n);
+[DllImport("user32.dll")]public static extern int GetWindowThreadProcessId(IntPtr h,out int p);}
+'@;$h=[W]::GetForegroundWindow();$sb=New-Object Text.StringBuilder 256;[void][W]::GetWindowText($h,$sb,256);$p=0;[void][W]::GetWindowThreadProcessId($h,[ref]$p);$proc=(Get-Process -Id $p -ErrorAction SilentlyContinue).ProcessName;Write-Output "$($sb.ToString())|$proc"`;
+  exec(`powershell -NoProfile -NonInteractive -Command "${ps.replace(/"/g, '\\"')}"`, { timeout: 4000, windowsHide: true }, (err, stdout) => {
+    if (err || !stdout) return;
+    const line = stdout.trim();
+    if (AI_PATTERNS.some(re => re.test(line))) flagCheat('ai-window', line.split('|')[0].slice(0, 60));
+    if (SNIP_PATTERNS.some(re => re.test(line))) flagCheat('snip-tool', 'כלי גזירת מסך נפתח');
+  });
+}
+
+function startCheatDetection() {
+  if (detectTimer) return;
+  lastClipText = clipboard.readText() || '';
+  lastClipImageEmpty = clipboard.readImage().isEmpty();
+  detectTimer = setInterval(() => { checkClipboard(); checkActiveWindow(); }, 2500);
+}
+function stopCheatDetection() {
+  if (detectTimer) { clearInterval(detectTimer); detectTimer = null; }
+}
+
 // ── יציאה מבוקרת מהאפליקציה ────────────────────────────────────
 let quitting = false;
 function doQuit() {
@@ -260,6 +339,13 @@ function registerExitHotkeys() {
   globalShortcut.register('Control+Shift+X', () => { if (!quitting) doQuit(); });
 }
 
+// 3) יירוט מקש PrintScreen (best-effort - חלק מהמחוות שמורות ל-Windows)
+function registerScreenshotInterception() {
+  ['PrintScreen', 'Alt+PrintScreen', 'CommandOrControl+PrintScreen'].forEach(k => {
+    try { globalShortcut.register(k, () => flagCheat('printscreen', 'נלחץ מקש צילום מסך')); } catch {}
+  });
+}
+
 // ── גשר IPC מדף התלמיד (preload חושף window.examAgent) ─────────
 ipcMain.on('agent-lock-input', (e, on) => setLock(!!on));
 ipcMain.handle('agent-info', () => ({ nativeInput: !!nativeInput, version: app.getVersion() }));
@@ -268,13 +354,18 @@ ipcMain.on('agent-quit', () => doQuit());
 ipcMain.on('set-server', (e, raw) => { examUrl = normalizeUrl(raw); saveExamUrl(examUrl); loadExam(); });
 ipcMain.on('reload-exam', () => loadExam());
 ipcMain.on('show-setup', () => showSetupPage());
+// דף התלמיד מוסר את טקסט השאלות (לזיהוי "הועתקה שאלה") ומפעיל/מכבה גילוי
+ipcMain.on('set-question-text', (e, txt) => { examQuestionText = (txt || '').slice(0, 5000); });
+ipcMain.on('cheat-detection', (e, on) => { on ? startCheatDetection() : stopCheatDetection(); });
 
 // ── אתחול ──────────────────────────────────────────────────────
 app.whenReady().then(() => {
   loadNativeInput();
   startDetectServer();
   registerExitHotkeys();
+  registerScreenshotInterception();
   createWindow();
+  startCheatDetection();   // גילוי פעיל כל עוד האפליקציה רצה
   handleProtocol(process.argv.find(a => a.startsWith('examclient://')));
 });
 app.on('window-all-closed', () => { /* נשאר חי כדי לשרת examclient:// ואת שרת הזיהוי */ });

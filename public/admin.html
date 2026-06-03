@@ -124,6 +124,7 @@
   <div class="stats-bar">
     <div class="stat"><span class="stat-val green" id="connCount">0</span><span>מחוברים</span></div>
     <div class="stat"><span>/</span><span class="stat-val blue" id="expCount">?</span><span>צפויים</span></div>
+    <div class="stat" title="כמה רצים באפליקציית הפיקוח לעומת דפדפן בלבד"><span>🛡️</span><span class="stat-val green" id="appCount">0</span><span style="color:var(--text2);">/</span><span class="stat-val" style="color:var(--danger);" id="noAppCount">0</span><span>🌐</span></div>
     <div class="stat"><span class="timer-display" id="timerDisplay">--:--</span></div>
   </div>
   <div class="setup-row">
@@ -271,7 +272,9 @@ ws.onmessage = async e => {
     students[msg.student.id] = { ...students[msg.student.id], ...msg.student };
     const card = document.getElementById(`card-${msg.student.id}`);
     if (card) card.classList.remove('disconnected');
-    updateStudentsList(); updateConnCount();
+    const appEl = document.getElementById(`app-${msg.student.id}`);
+    if (appEl) appEl.innerHTML = appBadge(msg.student.usingApp);
+    updateStudentsList(); updateConnCount(); updateAppCount();
     await createPeerConnection(msg.student.id);
   }
   if (msg.type === 'student-leave') {
@@ -492,7 +495,7 @@ function updateStudentCard(s) {
     <div class="card-info">
       <input type="checkbox" class="sel-box" data-id="${s.id}" onchange="updateSelCount()" title="בחר תלמיד" style="flex-shrink:0;">
       <div class="card-info-text">
-        <div class="card-name"><div class="dot" id="dot-${s.id}"></div>${s.name}<span id="flag-${s.id}" style="display:none;font-size:11px;"></span></div>
+        <div class="card-name"><div class="dot" id="dot-${s.id}"></div>${s.name}<span id="app-${s.id}" title="" style="font-size:11px;">${appBadge(s.usingApp)}</span><span id="flag-${s.id}" style="display:none;font-size:11px;"></span></div>
         <div class="card-meta"><span>${s.ip}</span> · <span id="res-${s.id}">${s.resolution||'-'}</span> · <span id="dur-${s.id}">0s</span></div>
       </div>
       <button class="action-btn shot-btn" onclick="captureManualShot(${s.id})" title="צלם מסך">📸</button>
@@ -510,6 +513,13 @@ function updateStudentCard(s) {
 function formatDuration(sec) {
   if (sec < 60) return `${sec}s`;
   return `${Math.floor(sec/60)}m${String(sec%60).padStart(2,'0')}s`;
+}
+
+// תג: רץ באפליקציה (מאובטח) או בדפדפן בלבד (אזהרה)
+function appBadge(usingApp) {
+  return usingApp
+    ? ' <span style="color:#00d4aa;" title="רץ באפליקציית הפיקוח">🛡️</span>'
+    : ' <span style="color:#ef4444;" title="בדפדפן בלבד - ללא אפליקציית הפיקוח!">🌐⚠️</span>';
 }
 
 function updateStudentsList() {
@@ -534,6 +544,15 @@ function updateConnCount() {
   const online = Object.values(students).filter(s => !document.getElementById(`card-${s.id}`)?.classList.contains('disconnected')).length;
   document.getElementById('connCount').textContent = online;
   document.getElementById('expCount').style.color = (expectedCount > 0 && online < expectedCount) ? 'var(--danger)' : 'var(--accent2)';
+  updateAppCount();
+}
+
+// כמה רצים באפליקציה לעומת דפדפן בלבד
+function updateAppCount() {
+  const all = Object.values(students);
+  const app = all.filter(s => s.usingApp).length;
+  document.getElementById('appCount').textContent = app;
+  document.getElementById('noAppCount').textContent = all.length - app;
 }
 
 function addLogEntry(entry) {

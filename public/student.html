@@ -155,6 +155,11 @@ window.addEventListener('load', async () => {
   agentPresent = await detectAgent();
   if (!agentPresent && !isMobile) showAgentPrompt();   // אפליקציית הפיקוח היא לשולחן עבודה בלבד
 
+  // מסירה לאפליקציה את טקסט הדף (לזיהוי "הועתקה שאלת המבחן")
+  if (window.examAgent?.setQuestionText) {
+    window.examAgent.setQuestionText(document.body.innerText || '');
+  }
+
   if (isMobile) adaptMobileUI();   // בטלפון: טקסט מצלמה במקום שיתוף מסך
 });
 
@@ -201,13 +206,13 @@ function joinExam() {
   document.getElementById('joinBtn').disabled = true;
   connectWS(() => {
     setStatus('מחובר לשרת', 'green');
-    ws.send(JSON.stringify({ type: 'student-join', name }));
+    ws.send(JSON.stringify({ type: 'student-join', name, usingApp: !!window.examAgent }));
   });
 }
 
 function rejoin() {
   setStatus('מתחבר מחדש...', 'yellow');
-  ws.send(JSON.stringify({ type: 'student-join', name: studentName }));
+  ws.send(JSON.stringify({ type: 'student-join', name: studentName, usingApp: !!window.examAgent }));
 }
 
 // חזרה למסך הכניסה לתיקון שם שגוי
@@ -388,6 +393,34 @@ window.addEventListener('paste', e => {
   reportEvent({ kind:'paste', length: txt.length, preview: txt.slice(0, 40) });
 });
 window.addEventListener('copy', () => { if (studentId) reportEvent({ kind:'copy' }); });
+
+// --- גילוי AI מהאפליקציה (לוח, חלון פעיל, צילום מסך) ---
+// מגיע מהאפליקציה דרך window.examAgent.onCheat. לא אפשרי בדפדפן רגיל.
+if (window.examAgent?.onCheat) {
+  window.examAgent.onCheat(data => {
+    reportEvent({ kind: 'ai-' + data.kind, detail: data.detail || '' });
+    warnAiCheat(data.kind);
+  });
+}
+
+// אזהרה לתלמיד שנתפס
+let _aiWarnTimer = null;
+function warnAiCheat(kind) {
+  const msgs = {
+    'clip-question': 'זוהתה העתקה של שאלת המבחן',
+    'clip-text':     'זוהתה העתקת טקסט',
+    'clip-image':    'זוהה צילום מסך',
+    'ai-window':     'זוהה שימוש בכלי בינה מלאכותית',
+    'snip-tool':     'זוהה כלי גזירת מסך',
+    'printscreen':   'זוהה צילום מסך',
+  };
+  const el = document.getElementById('teacherMsg');
+  el.textContent = '⛔ ' + (msgs[kind] || 'זוהתה פעולה אסורה') + ' — שימוש בכלי AI אסור ומדווח למורה';
+  el.style.background = '#7f1d1d';
+  el.style.display = 'block';
+  clearTimeout(_aiWarnTimer);
+  _aiWarnTimer = setTimeout(() => { el.style.display = 'none'; el.style.background = '#3b82f6'; }, 6000);
+}
 
 function checkSecondScreen() {
   if (studentId && window.screen && window.screen.isExtended) reportEvent({ kind:'second-screen' });
