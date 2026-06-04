@@ -369,6 +369,8 @@ const server = https.createServer({ key, cert }, (req, res) => {
 
 // ── WebSocket ─────────────────────────────────────────────────
 const wss = new WebSocketServer({ server });
+// ה-ws מאזין לאותו שרת; אם הפורט תפוס השגיאה מגיעה גם דרכו - מונעים קריסה
+wss.on('error', () => {});
 
 function sendToAdmin(data) {
   const msg = JSON.stringify(data);
@@ -645,6 +647,18 @@ setInterval(() => {
     }
   });
 }, 30000);
+
+// טיפול בשגיאת "הפורט תפוס" - הודעה ברורה במקום קריסה מכוערת
+server.on('error', err => {
+  if (err.code === 'EADDRINUSE') {
+    console.error(`\n❌ הפורט ${PORT} כבר בשימוש - כנראה השרת כבר פועל בחלון אחר.`);
+    console.error(`   סגור את החלון הקודם של השרת ונסה שוב, או הרץ:`);
+    console.error(`   npx kill-port ${PORT}\n`);
+  } else {
+    console.error(`\n❌ שגיאת שרת: ${err.message}\n`);
+  }
+  process.exit(1);
+});
 
 server.listen(PORT, () => {
   console.log(`\n✅ שרת פועל!`);
