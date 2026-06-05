@@ -448,6 +448,7 @@ wss.on('connection', (ws, req) => {
         'broadcast-end':() => ({ type:'broadcast-end' }), // סגירת שכבת שידור מסך המורה
         'end-exam':     () => ({ type:'end-exam' }),       // סיום מבחן - משחרר ויוצא מהאפליקציה
         'exam-url':     m => ({ type:'exam-url', url: m.url }), // הטמעת אתר המבחן (Option B)
+        'exam-links':   m => ({ type:'exam-links', links: m.links || [] }), // רשימת קישורים מאושרים
       };
       const build = ACTIONS[action];
       if (!build) return;
@@ -461,6 +462,7 @@ wss.on('connection', (ws, req) => {
         'broadcast-end':'📡 שיתוף מסך המורה הופסק',
         'end-exam':     '🏁 המבחן הסתיים - שוחררו תלמידים',
         'exam-url':     `🌐 אתר המבחן שודר: ${msg.url || ''}`,
+        'exam-links':   `🔗 שודרו ${(msg.links||[]).length} קישורים מאושרים`,
       };
       addLog('info', `${labels[action]} → ${targetLabel(target)} (${count})`);
       return;
@@ -603,6 +605,7 @@ wss.on('connection', (ws, req) => {
         'ai-ai-window':     `🤖🚨 ${sname} פתח כלי בינה מלאכותית${msg.detail ? ': '+msg.detail : ''}`,
         'ai-snip-tool':     `📸 ${sname} פתח כלי גזירת מסך`,
         'ai-printscreen':   `📸 ${sname} לחץ על מקש צילום מסך`,
+        'ai-off-list-nav':  `🔗⚠️ ${sname} ניווט לאתר לא מאושר${msg.detail ? ': '+msg.detail : ''}`,
       };
       const text = kinds[msg.kind];
       if (!text) return;

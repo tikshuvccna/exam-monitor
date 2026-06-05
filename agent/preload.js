@@ -27,6 +27,8 @@ contextBridge.exposeInMainWorld('examAgent', {
   // פתיחת/סגירת אתר המבחן בתצוגה אמיתית (לא iframe)
   openExam:  (url) => ipcRenderer.send('open-exam', url),
   closeExam: () => ipcRenderer.send('close-exam'),
+  // רשימת דומיינים מאושרים (לסימון ניווט חורג - לא חוסם)
+  setApprovedLinks: (urls) => ipcRenderer.send('set-approved-links', urls),
 });
 
 // ── באנר שקיפות: התלמיד תמיד רואה שהמכשיר בפיקוח ──────────────

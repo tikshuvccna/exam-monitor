@@ -89,12 +89,16 @@ function overlaySend(channel, data) {
 // BrowserView שמכסה את חלון ה-kiosk אך משאיר את student.html חי מתחתיו -
 // כך שיתוף המסך והקשר לשרת ממשיכים לרוץ ברקע בזמן שהתלמיד עושה את המבחן.
 let examView = null;
+let approvedDomains = [];   // דומיינים מאושרים - ניווט מחוצה להם מסומן (לא נחסם)
 function openExamView(url) {
   if (!url || !win) return;
   if (!examView) {
     examView = new BrowserView({ webPreferences: { contextIsolation: true } });
     examView.webContents.session.setCertificateVerifyProc((req, cb) => cb(0));
     win.addBrowserView(examView);
+    // הגבלה רכה: אם הניווט יוצא מהדומיינים המאושרים - מדווחים למורה (לא חוסמים)
+    examView.webContents.on('did-navigate', (e, navUrl) => checkApprovedNav(navUrl));
+    examView.webContents.on('did-navigate-in-page', (e, navUrl) => checkApprovedNav(navUrl));
   }
   const b = win.getBounds();
   examView.setBounds({ x: 0, y: 0, width: b.width, height: b.height });
@@ -105,6 +109,22 @@ function openExamView(url) {
 }
 function closeExamView() {
   if (examView && win) { win.removeBrowserView(examView); examView.webContents.destroy(); examView = null; }
+}
+
+// בדיקת ניווט מול הרשימה המאושרת - מדווח אך לא חוסם (כדי לא לשבור הפניות מבחן)
+let _lastFlaggedHost = '';
+function checkApprovedNav(navUrl) {
+  if (!approvedDomains.length) return;            // אין רשימה -> אין הגבלה
+  let host;
+  try { host = new URL(navUrl).hostname.replace(/^www\./,''); } catch { return; }
+  if (host === _lastFlaggedHost) return;          // לא לשלוח שוב ושוב לאותו דומיין
+  const ok = approvedDomains.some(d => host === d || host.endsWith('.' + d));
+  // דומיינים נפוצים של התחברות/הפניות לא מסומנים (google login וכו')
+  const benign = /(google|gstatic|googleusercontent|gstatic|office|microsoftonline|live|recaptcha)\./i.test(host);
+  if (!ok && !benign) {
+    _lastFlaggedHost = host;
+    flagCheat('off-list-nav', host);
+  }
 }
 
 // ── 1. חלון kiosk ───────────────────────────────────────────────
@@ -424,6 +444,9 @@ ipcMain.on('overlay-countdown', (e, data)  => overlaySend('set-countdown', data)
 // פתיחת אתר המבחן בתצוגה אמיתית מעל student.html (שנשאר חי לניטור)
 ipcMain.on('open-exam', (e, url) => openExamView(url));
 ipcMain.on('close-exam', () => closeExamView());
+ipcMain.on('set-approved-links', (e, urls) => {
+  approvedDomains = (urls || []).map(u => { try { return new URL(u).hostname.replace(/^www\./,''); } catch { return null; } }).filter(Boolean);
+});
 
 // ── אתחול ──────────────────────────────────────────────────────
 app.whenReady().then(() => {

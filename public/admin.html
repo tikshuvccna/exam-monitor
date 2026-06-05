@@ -158,6 +158,7 @@
   <button class="secondary" onclick="sendMessage()">✉️ הודעה</button>
   <button class="secondary" onclick="broadcastCountdown()">⏳ שדר ספירה</button>
   <button class="secondary" onclick="setExamUrl()">🌐 הטמע אתר מבחן</button>
+  <button class="secondary" onclick="manageLinks()">🔗 קישורים מאושרים</button>
   <button class="secondary" onclick="control('screen-lock', true)">🔒 נעל</button>
   <button class="secondary" onclick="control('screen-lock', false)">🔓 שחרר</button>
   <button class="secondary" onclick="control('input-block', true)">⌨️ חסום קלט</button>
@@ -681,6 +682,25 @@ function setExamUrl() {
   const url = prompt('הדבק את כתובת אתר המבחן (למשל קישור לטופס):', 'https://');
   if (!url || url === 'https://') return;
   ws.send(JSON.stringify({ type:'control', action:'exam-url', target:'all', url }));
+}
+
+// רשימת קישורים מאושרים - התלמיד לוחץ ופותח בחלון המבחן
+let examLinks = JSON.parse(localStorage.getItem('examLinks') || '[]');
+function manageLinks() {
+  const current = examLinks.map((l,i) => `${i+1}. ${l.name} → ${l.url}`).join('\n') || '(אין קישורים עדיין)';
+  const choice = prompt(
+    'קישורים מאושרים נוכחיים:\n' + current +
+    '\n\nהדבק כל קישור בשורה נפרדת בפורמט:  שם | כתובת\nלדוגמה:\nחלק א | https://forms.gle/abc\nדף עזר | https://example.com/sheet\n\n(שדה ריק = ביטול)',
+    examLinks.map(l => `${l.name} | ${l.url}`).join('\n')
+  );
+  if (choice === null) return;
+  examLinks = choice.split('\n').map(line => {
+    const [name, url] = line.split('|').map(s => (s||'').trim());
+    return (name && url) ? { name, url } : null;
+  }).filter(Boolean);
+  localStorage.setItem('examLinks', JSON.stringify(examLinks));
+  ws.send(JSON.stringify({ type:'control', action:'exam-links', target:'all', links: examLinks }));
+  alert(`שודרו ${examLinks.length} קישורים לתלמידים.`);
 }
 
 function broadcastCountdown() {
