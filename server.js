@@ -69,9 +69,21 @@ let expectedCount     = 0;
 let students          = {};
 let log               = [];
 let idCounter         = 1;
-let persistentStudents = {};  
-let timerStartTime    = null; 
-let examStartedAt     = null; 
+let persistentStudents = {};
+let timerStartTime    = null;
+let examStartedAt     = null;
+
+// מצב מבחן נוכחי - מוחל אוטומטית על תלמידים שמצטרפים/מתחברים מחדש
+let examState = {
+  examUrl: null,          // אתר המבחן המוטמע
+  links: [],              // קישורים מאושרים
+  countdown: null,        // { on, endsAt }
+  lock: null,             // { on, message }
+  inputBlock: false,      // חסימת קלט פעילה
+};
+// תלמידים שהועפו - חסומים מהצטרפות מחדש לזמן קצר
+const kicked = {};        // key: "name|ip" -> timestamp; וגם key: "name"
+const KICK_BLOCK_MS = 2 * 60 * 1000;  // חסימה ל-2 דקות
 
 // ── Log helpers ───────────────────────────────────────────────
 function appendLogFile(entry) {
@@ -391,6 +403,18 @@ function sendToStudents(target, payload) {
   return sent;
 }
 
+// מחיל את מצב המבחן הנוכחי על תלמיד בודד שהצטרף/התחבר מחדש
+function applyExamStateTo(ws) {
+  if (!ws || ws.readyState !== 1) return;
+  const send = obj => ws.send(JSON.stringify(obj));
+  if (examState.links && examState.links.length) send({ type:'exam-links', links: examState.links });
+  if (examState.examUrl)   send({ type:'exam-url', url: examState.examUrl });
+  if (examState.countdown) send({ type:'countdown', on:true, endsAt: examState.countdown.endsAt });
+  if (examState.lock)      send({ type:'screen-lock', on:true, message: examState.lock.message });
+  if (examState.inputBlock) send({ type:'input-block', on:true });
+  if (screenshotsEnabled)  send({ type:'start-screenshots' });
+}
+
 // מחזיר תיאור קריא של היעד עבור הלוג
 function targetLabel(target) {
   if (target === 'all') return 'כל התלמידים';
@@ -453,6 +477,16 @@ wss.on('connection', (ws, req) => {
       const build = ACTIONS[action];
       if (!build) return;
       const count = sendToStudents(target, build(msg));
+
+      // שמירת מצב לתלמידים שיצטרפו/יתחברו מחדש (חל רק על 'all')
+      if (target === 'all') {
+        if (action === 'exam-url')    examState.examUrl = msg.url;
+        if (action === 'exam-links')  examState.links = msg.links || [];
+        if (action === 'countdown')   examState.countdown = msg.on ? { on:true, endsAt: msg.endsAt } : null;
+        if (action === 'screen-lock') examState.lock = msg.on ? { on:true, message: msg.message || '' } : null;
+        if (action === 'input-block') examState.inputBlock = !!msg.on;
+        if (action === 'end-exam')    examState = { examUrl:null, links:[], countdown:null, lock:null, inputBlock:false };
+      }
       const labels = {
         'screen-lock':  msg.on ? '🔒 נעילת מסך' : '🔓 שחרור מסך',
         'input-block':  msg.on ? '⌨️ חסימת קלט' : '⌨️ שחרור קלט',
@@ -505,11 +539,24 @@ wss.on('connection', (ws, req) => {
       const id = parseInt(msg.id);
       const s  = students[id];
       if (s) {
+        // רישום החסימה - מונע הצטרפות מחדש מיידית
+        kicked[`${s.name}|${s.ip}`] = Date.now();
+        kicked[s.name] = Date.now();
         if (s.ws && s.ws.readyState === 1) { s.ws.send(JSON.stringify({ type: 'kicked' })); s.ws.close(); }
         delete students[id];
         sendToAdmin({ type: 'student-remove', id });
-        addLog('warning', `🚫 ${s.name} הועף מהמערכת`);
+        addLog('warning', `🚫 ${s.name} הועף מהמערכת (חסום ל-${KICK_BLOCK_MS/60000} דק')`);
         recordStudentEvent(s.name, 'הועף מהמערכת');
+      }
+      return;
+    }
+
+    // ביטול חסימת תלמיד שהועף (מאפשר חזרה לפני תום הזמן)
+    if (msg.type === 'unkick' && ws._isAdmin) {
+      const name = (msg.name || '').trim();
+      if (name) {
+        Object.keys(kicked).forEach(k => { if (k === name || k.startsWith(name + '|')) delete kicked[k]; });
+        addLog('info', `✅ חסימת ${name} בוטלה`);
       }
       return;
     }
@@ -528,6 +575,15 @@ wss.on('connection', (ws, req) => {
       const name = (msg.name || '').trim();
       if (!name) return;
 
+      // חסימת תלמיד שהועף - לא יכול להצטרף מחדש מיד
+      const kickKey = `${name}|${ip}`;
+      const kickedAt = kicked[kickKey] || kicked[name];
+      if (kickedAt && Date.now() - kickedAt < KICK_BLOCK_MS) {
+        ws.send(JSON.stringify({ type: 'kicked' }));
+        ws.close();
+        return;
+      }
+
       const usingApp = !!msg.usingApp;
       const existing = Object.values(students).find(s => s.name === name);
       if (existing) {
@@ -538,6 +594,7 @@ wss.on('connection', (ws, req) => {
         recordStudent({ name, ip });
         recordStudentEvent(name, 'התחבר מחדש');
         sendToAdmin({ type: 'reconnect', student: { id: existing.id, name, ip, connectedAt: existing.connectedAt, resolution: existing.resolution, lastSeen: existing.lastSeen, usingApp } });
+        applyExamStateTo(ws);   // מחיל מצב מבחן נוכחי (אתר/קישורים/טיימר/נעילה)
       } else {
         const id = idCounter++;
         students[id] = { id, ws, name, ip, connectedAt: Date.now(), resolution: null, lastSeen: Date.now(), usingApp };
@@ -552,6 +609,7 @@ wss.on('connection', (ws, req) => {
           addLog('warning', `⚠️ מחוברים יותר תלמידים מהצפוי! (${connected}/${expectedCount})`);
           sendToAdmin({ type: 'alert', message: `מחוברים יותר תלמידים מהצפוי! (${connected}/${expectedCount})` });
         }
+        applyExamStateTo(ws);   // מחיל מצב מבחן נוכחי על תלמיד חדש
       }
       return;
     }
