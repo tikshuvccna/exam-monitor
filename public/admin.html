@@ -166,6 +166,7 @@
   <button class="secondary" onclick="control('agent-launch')">🚀 הפעל אפליקציה</button>
   <button class="secondary" onclick="unkickStudent()">↩️ בטל חסימה</button>
   <button class="secondary" onclick="endExam()" style="border-color:rgba(239,68,68,0.5);color:#fca5a5;">🏁 סיים מבחן</button>
+  <button class="secondary" onclick="location.href='/admin-logout'">🚪 יציאה</button>
   <span style="color:var(--text2);font-size:11px;">(פעולות חלות על הנבחרים, או על כולם אם אין בחירה)</span>
 </div>
 
@@ -199,6 +200,8 @@
 
 <script>
 const ws = new WebSocket(`wss://${location.host}`);
+// כל טקסט שמגיע מתלמיד (שם, IP, אירועים) חייב לעבור escape לפני innerHTML
+const esc = v => String(v == null ? '' : v).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const peers    = {};
 const students = {};
 const cardTimers = {};   // interval-ים של משך זמן לכל כרטיס - לניקוי בהסרה
@@ -220,14 +223,28 @@ fetch('/turn-config').then(r => r.json()).then(cfg => {
 
 ws.onopen = () => ws.send(JSON.stringify({ type: 'admin-join' }));
 
+ws.onclose = () => {
+  const b = document.getElementById('alertBanner');
+  if (b) { b.textContent = '⚠️ החיבור לשרת נותק - טוען מחדש...'; b.style.display = 'block'; }
+  setTimeout(() => location.reload(), 3000);
+};
+
 ws.onmessage = async e => {
-  const msg = JSON.parse(e.data);
+  let msg; try { msg = JSON.parse(e.data); } catch { return; }
+
+  if (msg.type === 'auth-required') { location.reload(); return; }   // הסשן פג - חוזרים לדף הכניסה
 
   if (msg.type === 'state') {
     expectedCount = msg.expectedCount;
     document.getElementById('expCount').textContent = expectedCount || '?';
     if (expectedCount) document.getElementById('expectedInput').value = expectedCount;
-    msg.students.forEach(s => { students[s.id] = s; updateStudentCard(s); });
+    msg.students.forEach(s => {
+      students[s.id] = s; updateStudentCard(s);
+      if (s.online === false) {
+        const card = document.getElementById(`card-${s.id}`); if (card) card.classList.add('disconnected');
+        const dot = document.getElementById(`dot-${s.id}`); if (dot) dot.className = 'dot offline';
+      }
+    });
     updateStudentsList(); updateConnCount();
     msg.log.forEach(entry => addLogEntry(entry));
     
@@ -277,8 +294,11 @@ ws.onmessage = async e => {
     if (card) card.classList.remove('disconnected');
     const appEl = document.getElementById(`app-${msg.student.id}`);
     if (appEl) appEl.innerHTML = appBadge(msg.student.usingApp);
+    const dotR = document.getElementById(`dot-${msg.student.id}`);
+    if (dotR) dotR.className = 'dot';
     updateStudentsList(); updateConnCount(); updateAppCount();
     await createPeerConnection(msg.student.id);
+    if (bcStream) await startBroadcastTo(msg.student.id);   // המשך שידור מסך המורה גם אחרי חיבור מחדש
   }
   if (msg.type === 'student-leave') {
     const card = document.getElementById(`card-${msg.id}`);
@@ -452,7 +472,7 @@ function openPopup(id) {
 
   // בניית דף ה-HTML של החלון הקופץ, כולל ה-IP
   popup.document.write(`<!DOCTYPE html>
-<html><head><meta charset="UTF-8"><title>${name} - צפייה במסך</title>
+<html><head><meta charset="UTF-8"><title>${esc(name)} - צפייה במסך</title>
 <style>
   body{margin:0;background:#000;display:flex;align-items:center;justify-content:center;
     height:100vh;flex-direction:column;gap:10px;font-family:sans-serif;}
@@ -464,8 +484,8 @@ function openPopup(id) {
 <body>
   <video id="v" autoplay playsinline muted></video>
   <div class="info-bar">
-    <p class="name">${name}</p>
-    <p class="ip">IP: ${ip}</p>
+    <p class="name">${esc(name)}</p>
+    <p class="ip">IP: ${esc(ip)}</p>
   </div>
 </body></html>`);
   popup.document.close();
@@ -496,16 +516,16 @@ function updateStudentCard(s) {
       <div class="hover-zoom">
         <video id="zoom-video-${s.id}" autoplay playsinline muted></video>
         <div class="hover-zoom-info">
-          <span class="hover-zoom-name">${s.name}</span>
-          <span class="hover-zoom-ip">IP: ${s.ip}</span>
+          <span class="hover-zoom-name">${esc(s.name)}</span>
+          <span class="hover-zoom-ip">IP: ${esc(s.ip)}</span>
         </div>
       </div>
     </div>
     <div class="card-info">
       <input type="checkbox" class="sel-box" data-id="${s.id}" onchange="updateSelCount()" title="בחר תלמיד" style="flex-shrink:0;">
       <div class="card-info-text">
-        <div class="card-name"><div class="dot" id="dot-${s.id}"></div>${s.name}<span id="app-${s.id}" title="" style="font-size:11px;">${appBadge(s.usingApp)}</span><span id="flag-${s.id}" style="display:none;font-size:11px;"></span></div>
-        <div class="card-meta"><span>${s.ip}</span> · <span id="res-${s.id}">${s.resolution||'-'}</span> · <span id="dur-${s.id}">0s</span></div>
+        <div class="card-name"><div class="dot" id="dot-${s.id}"></div>${esc(s.name)}<span id="app-${s.id}" title="" style="font-size:11px;">${appBadge(s.usingApp)}</span><span id="flag-${s.id}" style="display:none;font-size:11px;"></span></div>
+        <div class="card-meta"><span>${esc(s.ip)}</span> · <span id="res-${s.id}">${esc(s.resolution||'-')}</span> · <span id="dur-${s.id}">0s</span></div>
       </div>
       <button class="action-btn shot-btn" onclick="captureManualShot(${s.id})" title="צלם מסך">📸</button>
       <button class="action-btn popup-btn" onclick="openPopup(${s.id})"      title="פתח בחלון נפרד">⧉</button>
@@ -541,8 +561,8 @@ function updateStudentsList() {
     div.className = 'student-row';
     div.innerHTML = `
       <div class="student-row-text">
-        <div class="student-row-name"><div class="dot ${online?'':'offline'}"></div>${s.name}</div>
-        <div class="student-row-meta">${s.ip} | ${s.resolution||'-'} | ${formatDuration(sec)}</div>
+        <div class="student-row-name"><div class="dot ${online?'':'offline'}"></div>${esc(s.name)}</div>
+        <div class="student-row-meta">${esc(s.ip)} | ${esc(s.resolution||'-')} | ${formatDuration(sec)}</div>
       </div>
       <button class="action-btn kick-btn" onclick="kickStudent(${s.id})" title="העף">✕</button>`;
     list.appendChild(div);
@@ -569,7 +589,7 @@ function addLogEntry(entry) {
   const div  = document.createElement('div');
   div.className = `log-entry ${entry.type}`;
   const time = new Date(entry.time).toLocaleTimeString('he-IL');
-  div.innerHTML = `<div class="log-time">${time}</div><div>${entry.message}</div>`;
+  div.innerHTML = `<div class="log-time">${esc(time)}</div><div>${esc(entry.message)}</div>`;
   list.insertBefore(div, list.firstChild);
   if (list.children.length > 200) list.removeChild(list.lastChild);
 }
@@ -635,7 +655,8 @@ function exportReport() {
     rows.push([s.name, s.ip, s.resolution||'-', Math.floor((Date.now()-s.connectedAt)/1000), online?'מחובר':'מנותק']);
   });
   const a = document.createElement('a');
-  a.href = URL.createObjectURL(new Blob(['\uFEFF'+rows.map(r=>r.join(',')).join('\n')], {type:'text/csv;charset=utf-8'}));
+  const cell = v => { let t = String(v); if (/^[=+\-@\t\r]/.test(t)) t = "'" + t; return '"' + t.replace(/"/g, '""') + '"'; };
+  a.href = URL.createObjectURL(new Blob(['\uFEFF'+rows.map(r=>r.map(cell).join(',')).join('\n')], {type:'text/csv;charset=utf-8'}));
   a.download = `exam-now-${new Date().toLocaleDateString('he-IL').replace(/\//g,'-')}.csv`;
   a.click();
 }
@@ -653,7 +674,8 @@ function downloadFullLog() {
 // בחירת יעד: הנבחרים, או 'all' אם אין בחירה
 function selectedTargets() {
   const ids = [...document.querySelectorAll('.sel-box:checked')].map(b => parseInt(b.dataset.id));
-  return ids.length ? ids : 'all';
+  const total = document.querySelectorAll('.sel-box').length;
+  return (ids.length && ids.length < total) ? ids : 'all';   // "בחר הכל" = כולם (נשמר גם לחוזרים)
 }
 function updateSelCount() {
   const n = document.querySelectorAll('.sel-box:checked').length;
@@ -713,7 +735,7 @@ function manageLinks() {
 function broadcastCountdown() {
   const mins = parseInt(prompt('כמה דקות לספירה לאחור?', '30'));
   if (!mins || mins < 1) return;
-  ws.send(JSON.stringify({ type:'control', action:'countdown', target:'all', on:true, endsAt: Date.now() + mins*60*1000 }));
+  ws.send(JSON.stringify({ type:'control', action:'countdown', target:'all', on:true, durationMs: mins*60*1000 }));
 }
 
 // סימון דגל חשד על כרטיס התלמיד

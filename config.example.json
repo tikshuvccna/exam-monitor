@@ -1,5 +1,5 @@
 {
-  "adminPassword": "bandwidth",
+  "adminPassword": "CHANGE-ME",
   "turnUser": "examuser",
   "turnPass": "exampass",
   "port": 4555,

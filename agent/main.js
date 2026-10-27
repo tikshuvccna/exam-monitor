@@ -20,19 +20,24 @@ if (!app) {
 }
 
 const DETECT_PORT = 7345;
-const EXIT_PASSWORD = process.env.EXAM_EXIT_PASS || 'examexit';   // סיסמת יציאה שהמורה מוסר
+// סיסמת יציאה שהמורה מוסר. ניתן לשנות ב-exam-config.json (exitPass) או במשתנה EXAM_EXIT_PASS
 
 // ── כתובת שרת המבחן ───────────────────────────────────────────
 // סדר עדיפויות: env > config שמור > ברירת מחדל. נשמר בין הפעלות.
 const CONFIG_FILE = path.join(app.getPath('userData'), 'exam-config.json');
+function readConfig() {
+  try { return JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8')) || {}; } catch { return {}; }
+}
+function writeConfig(patch) {
+  try { fs.writeFileSync(CONFIG_FILE, JSON.stringify({ ...readConfig(), ...patch })); } catch {}
+}
 function loadExamUrl() {
   if (process.env.EXAM_URL) return process.env.EXAM_URL;
-  try { return JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8')).examUrl || ''; }
-  catch { return ''; }
+  return readConfig().examUrl || '';
 }
-function saveExamUrl(url) {
-  try { fs.writeFileSync(CONFIG_FILE, JSON.stringify({ examUrl: url })); } catch {}
-}
+// כתובת חדשה = שרת חדש, לכן גם טביעת האצבע של התעודה שנשמרה מתאפסת
+function saveExamUrl(url) { writeConfig({ examUrl: url, certPin: '' }); }
+const EXIT_PASSWORD = process.env.EXAM_EXIT_PASS || readConfig().exitPass || 'examexit';
 // משלים נתיב מלא מכתובת/IP שהמורה מוסר (למשל "192.168.1.50")
 function normalizeUrl(raw) {
   let u = (raw || '').trim();
@@ -46,22 +51,29 @@ function normalizeUrl(raw) {
 }
 
 let examUrl = loadExamUrl();
+
+// ── אימות תעודת השרת ───────────────────────────────────────────
+// שרת המבחן משתמש בתעודה עצמית. במקום לקבל כל תעודה, "מצמידים" (TOFU) את טביעת האצבע
+// של התעודה בחיבור הראשון לשרת שהוגדר, ומאז דורשים אותה. אתרים אחרים (אתר המבחן עצמו)
+// נבדקים כרגיל לפי רשימת הרשויות של המערכת.
+function serverHost() { try { return new URL(examUrl).hostname; } catch { return ''; } }
+function certVerify(req, cb) {
+  if (!serverHost() || req.hostname !== serverHost()) return cb(-3);   // -3 = אימות רגיל של Chromium
+  const fp = req.certificate && req.certificate.fingerprint;
+  if (!fp) return cb(-2);
+  const pinned = readConfig().certPin;
+  if (!pinned) { writeConfig({ certPin: fp }); return cb(0); }
+  return cb(pinned === fp ? 0 : -2);
+}
+
 let win = null;
 let inputLocked = false;
 
 // ── ספרייה ילידית לקלט (אופציונלית) ───────────────────────────
 // נטענת רק אם הותקנה. בלעדיה האפליקציה עדיין עובדת (kiosk + קיצורים).
 // נטענת אחרי app.whenReady כדי לא להתנגש באתחול של electron.
-let nativeInput = null;
-function loadNativeInput() {
-  try {
-    nativeInput = require('@jitsi/robotjs');
-    console.log('✅ native input (robotjs) loaded - full lock/remote-control available');
-  } catch {
-    try { nativeInput = require('robotjs'); console.log('✅ robotjs loaded'); }
-    catch { console.log('ℹ️  native input library not installed - using kiosk fallback only'); }
-  }
-}
+// (הוסרה תמיכה בשליטה מרחוק/robotjs: אף חלק במערכת לא השתמש בה, והיא אפשרה הקלדה על מחשב התלמיד)
+const nativeInput = null;
 
 // ── שכבת-על שולחנית (Option A) ─────────────────────────────────
 // חלון שקוף, תמיד-עליון, שקוף-ללחיצות, שמרחף מעל כל אתר/אפליקציה.
@@ -89,38 +101,70 @@ function overlaySend(channel, data) {
 // BrowserView שמכסה את חלון ה-kiosk אך משאיר את student.html חי מתחתיו -
 // כך שיתוף המסך והקשר לשרת ממשיכים לרוץ ברקע בזמן שהתלמיד עושה את המבחן.
 let examView = null;
+let examViewUrl = '';        // האתר שנטען כעת (לא טוענים מחדש אותו אתר בחיבור מחדש)
+let examViewHidden = false;  // מוסתר בזמן נעילת מסך / שידור מסך המורה
 let approvedDomains = [];   // דומיינים מאושרים - ניווט מחוצה להם מסומן (לא נחסם)
+let examHost = '';          // הדומיין של אתר המבחן עצמו - תמיד מאושר
+const LINKS_BAR_PX = 56;    // פס הקישורים המאושרים של student.html נשאר גלוי מתחת לאתר המבחן
+function examBounds() {
+  const b = win.getContentBounds();
+  const reserve = approvedDomains.length ? LINKS_BAR_PX : 0;
+  return { x: 0, y: 0, width: b.width, height: Math.max(100, b.height - reserve) };
+}
 function openExamView(url) {
-  if (!url || !win) return;
+  if (!url || !win || !/^https?:\/\//i.test(url)) return;
+  try { examHost = new URL(url).hostname.replace(/^www\./, ''); } catch { examHost = ''; }
   if (!examView) {
     examView = new BrowserView({ webPreferences: { contextIsolation: true } });
-    examView.webContents.session.setCertificateVerifyProc((req, cb) => cb(0));
-    win.addBrowserView(examView);
+    examView.webContents.session.setCertificateVerifyProc(certVerify);
+    if (!examViewHidden) win.addBrowserView(examView);
     // הגבלה רכה: אם הניווט יוצא מהדומיינים המאושרים - מדווחים למורה (לא חוסמים)
     examView.webContents.on('did-navigate', (e, navUrl) => checkApprovedNav(navUrl));
     examView.webContents.on('did-navigate-in-page', (e, navUrl) => checkApprovedNav(navUrl));
+    // חלון חדש (target=_blank / window.open) נפתח באותה תצוגה, לא כחלון חופשי מחוץ ל-kiosk
+    examView.webContents.setWindowOpenHandler(({ url: u }) => {
+      if (/^https?:\/\//i.test(u)) examView.webContents.loadURL(u);
+      return { action: 'deny' };
+    });
+  } else if (examViewUrl === url) {
+    // אותו אתר כבר פתוח - לא טוענים מחדש (נפילת רשת קצרה לא תאפס תשובות של התלמיד)
+    applyExamBounds();
+    return;
   }
-  const b = win.getBounds();
-  examView.setBounds({ x: 0, y: 0, width: b.width, height: b.height });
-  examView.setAutoResize({ width: true, height: true });
+  examViewUrl = url;
+  applyExamBounds();
   examView.webContents.loadURL(url);
   // שמירה על סדר השכבות: overlay (טיימר/הודעות) תמיד למעלה
   if (overlay) overlay.setAlwaysOnTop(true, 'screen-saver');
 }
+function applyExamBounds() {
+  if (!examView || !win) return;
+  examView.setBounds(examBounds());
+}
 function closeExamView() {
-  if (examView && win) { win.removeBrowserView(examView); examView.webContents.destroy(); examView = null; }
+  if (examView && win) { win.removeBrowserView(examView); examView.webContents.destroy(); }
+  examView = null; examViewUrl = ''; examHost = '';
+}
+// BrowserView תמיד מצויר מעל הדף. כדי שמסך הנעילה / שידור המורה יראו - מסירים אותו זמנית
+function setExamHidden(hidden) {
+  examViewHidden = !!hidden;
+  if (!examView || !win) return;
+  if (examViewHidden) { try { win.removeBrowserView(examView); } catch {} }
+  else { try { win.addBrowserView(examView); applyExamBounds(); } catch {} }
+  if (overlay) overlay.setAlwaysOnTop(true, 'screen-saver');
 }
 
 // בדיקת ניווט מול הרשימה המאושרת - מדווח אך לא חוסם (כדי לא לשבור הפניות מבחן)
 let _lastFlaggedHost = '';
+// דומיינים של התחברות/הפניות בלבד (מדויקים - לא כל דומיין שמכיל "google" או "live")
+const BENIGN_HOSTS = /^(accounts\.google\.com|[a-z0-9-]+\.gstatic\.com|gstatic\.com|[a-z0-9-]+\.googleusercontent\.com|login\.microsoftonline\.com|login\.live\.com|[a-z0-9-]*\.?recaptcha\.net|forms\.gle)$/i;
 function checkApprovedNav(navUrl) {
   if (!approvedDomains.length) return;            // אין רשימה -> אין הגבלה
   let host;
   try { host = new URL(navUrl).hostname.replace(/^www\./,''); } catch { return; }
   if (host === _lastFlaggedHost) return;          // לא לשלוח שוב ושוב לאותו דומיין
-  const ok = approvedDomains.some(d => host === d || host.endsWith('.' + d));
-  // דומיינים נפוצים של התחברות/הפניות לא מסומנים (google login וכו')
-  const benign = /(google|gstatic|googleusercontent|gstatic|office|microsoftonline|live|recaptcha)\./i.test(host);
+  const ok = host === examHost || approvedDomains.some(d => host === d || host.endsWith('.' + d));
+  const benign = BENIGN_HOSTS.test(host);
   if (!ok && !benign) {
     _lastFlaggedHost = host;
     flagCheat('off-list-nav', host);
@@ -140,8 +184,16 @@ function createWindow() {
     },
   });
   win.setAlwaysOnTop(true, 'screen-saver');
-  // אישור אוטומטי של ה-self-signed cert של שרת המבחן
-  win.webContents.session.setCertificateVerifyProc((req, cb) => cb(0));
+  // אימות תעודת השרת בהצמדת טביעת אצבע (ראה certVerify)
+  win.webContents.session.setCertificateVerifyProc(certVerify);
+  // הדף הראשי רשאי להציג רק את שרת המבחן ואת המסכים הפנימיים; חלונות חדשים נחסמים
+  win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  win.webContents.on('will-navigate', (e, navUrl) => {
+    if (navUrl.startsWith('data:')) return;
+    let ok = false;
+    try { ok = new URL(navUrl).hostname === serverHost(); } catch {}
+    if (!ok) e.preventDefault();
+  });
 
   // ── תיקון getDisplayMedia ב-Electron ──────────────────────────
   // בדפדפן יש בורר מסך מובנה; ב-Electron חובה לספק handler.
@@ -149,14 +201,18 @@ function createWindow() {
   // לא יכול "בטעות" לשתף רק חלון, מה שמחזק את הפיקוח).
   win.webContents.session.setDisplayMediaRequestHandler((request, callback) => {
     desktopCapturer.getSources({ types: ['screen'] }).then(sources => {
-      if (sources && sources.length) callback({ video: sources[0] });  // המסך הראשי המלא, ללא אודיו
+      // המסך הראשי דווקא (לא בהכרח הראשון ברשימה), ללא אודיו
+      const primaryId = String(screen.getPrimaryDisplay().id);
+      const primary = (sources || []).find(s => String(s.display_id) === primaryId) || (sources || [])[0];
+      if (primary) callback({ video: primary });
       else callback({});
     }).catch(() => callback({}));
   }, { useSystemPicker: false });
 
   // אם נכשלת טעינת דף המבחן - מציגים מסך שגיאה ידידותי במקום מסך ריק נעול
-  win.webContents.on('did-fail-load', (e, code, desc, url) => {
+  win.webContents.on('did-fail-load', (e, code, desc, url, isMainFrame) => {
     if (code === -3) return; // ABORTED - לא רלוונטי
+    if (isMainFrame === false) return; // כשל בתת-מסגרת (iframe) לא מחליף את כל הדף
     if (url && url.startsWith('data:')) return; // המסכים הפנימיים שלנו
     showErrorPage(desc || `קוד שגיאה ${code}`);
   });
@@ -178,7 +234,7 @@ function showSetupPage(currentErr) {
     <div style="font-size:40px;">🖥️</div>
     <h2 style="margin:0;">הגדרת שרת המבחן</h2>
     <p style="color:#94a3b8;font-size:14px;margin:0;text-align:center;max-width:420px;">הזן את כתובת ה-IP של מחשב המורה (מופיעה בדף המורה).<br>לדוגמה: <b>192.168.1.50</b></p>
-    ${currentErr ? `<p style="color:#ef4444;font-size:13px;">${currentErr}</p>` : ''}
+    ${currentErr ? `<p style="color:#ef4444;font-size:13px;">${String(currentErr).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}</p>` : ''}
     <input id="srv" placeholder="כתובת השרת / IP" style="width:300px;padding:10px;border-radius:8px;border:1px solid #334155;background:#1e293b;color:#fff;text-align:center;font-size:15px;">
     <button onclick="save()" style="padding:10px 28px;border:none;border-radius:8px;background:#00d4aa;font-weight:700;cursor:pointer;font-size:15px;">המשך למבחן</button>
     <button onclick="quit()" style="padding:6px 18px;border:1px solid #334155;border-radius:8px;background:transparent;color:#94a3b8;cursor:pointer;font-size:12px;">יציאה</button>
@@ -196,7 +252,7 @@ function showErrorPage(msg) {
   <body style="font-family:sans-serif;background:#0f172a;color:#e2e8f0;display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;gap:14px;margin:0;">
     <div style="font-size:44px;">⚠️</div>
     <h2 style="margin:0;">לא ניתן להתחבר לשרת המבחן</h2>
-    <p style="color:#94a3b8;font-size:13px;max-width:440px;text-align:center;">${msg}</p>
+    <p style="color:#94a3b8;font-size:13px;max-width:440px;text-align:center;">${String(msg).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}</p>
     <p style="color:#64748b;font-size:12px;">בדוק שמחשב המורה פועל ושאתה מחובר לאותה רשת.</p>
     <div style="display:flex;gap:10px;">
       <button onclick="retry()" style="padding:10px 24px;border:none;border-radius:8px;background:#00d4aa;font-weight:700;cursor:pointer;">נסה שוב</button>
@@ -214,7 +270,10 @@ function showErrorPage(msg) {
 // ── 2. שרת זיהוי מקומי ─────────────────────────────────────────
 function startDetectServer() {
   const srv = http.createServer((req, res) => {
-    res.setHeader('Access-Control-Allow-Origin', '*');
+    // רק דף התלמיד של שרת המבחן רשאי לשאול אם האפליקציה מותקנת (לא כל אתר באינטרנט)
+    let allowed = '*';
+    try { if (examUrl) allowed = new URL(examUrl).origin; } catch {}
+    if (allowed === '*' || req.headers.origin === allowed) res.setHeader('Access-Control-Allow-Origin', allowed);
     if (req.url === '/ping') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ app: 'exam-client', version: app.getVersion(), nativeInput: !!nativeInput }));
@@ -252,47 +311,25 @@ app.on('second-instance', (e, argv) => {
 function handleProtocol(url) {
   if (!url) return;
   const action = url.replace('examclient://', '').replace(/\/$/, '');
+  // רק הפעלה. נעילה/יציאה דרך קישור אינטרנט הוסרו: כל אתר היה יכול לשלוח אותן
   if (action === 'start' && !win) createWindow();
-  if (action === 'lock')   setLock(true);
-  if (action === 'unlock') setLock(false);
-  if (action === 'quit')   doQuit();
 }
 
 // ── 4. נעילה / חסימת קלט אמיתית ────────────────────────────────
+const LOCK_KEYS = ['Alt+Tab','Alt+F4','Super','Control+W','Control+Shift+I','F11','Control+R','CommandOrControl+Q'];
 function setLock(on) {
   inputLocked = on;
   if (on) {
     // חסימת קיצורים נפוצים (לא חוסם Ctrl+Alt+Del - אבטחת מערכת ההפעלה)
-    ['Alt+Tab','Alt+F4','Super','Control+W','Control+Shift+I','F11','Control+R','CommandOrControl+Q']
-      .forEach(k => { try { globalShortcut.register(k, () => {}); } catch {} });
+    LOCK_KEYS.forEach(k => { try { globalShortcut.register(k, () => {}); } catch {} });
     if (win) { win.setKiosk(true); win.setAlwaysOnTop(true, 'screen-saver'); win.focus(); }
   } else {
-    globalShortcut.unregisterAll();
+    // משחררים רק את קיצורי הנעילה - קיצורי היציאה וזיהוי PrintScreen נשארים פעילים
+    LOCK_KEYS.forEach(k => { try { globalShortcut.unregister(k); } catch {} });
   }
   // אם יש ספרייה ילידית - אפשר לחסום קלט עמוק יותר (תלוי-פלטפורמה).
   // robotjs לבדו לא חוסם קלט; לחסימה מלאה צריך hook ברמת מערכת ההפעלה.
   // ה-kiosk + alwaysOnTop נותן חסימה מעשית טובה ברוב המקרים.
-}
-
-// ── 5. שליטה מרחוק - השמעת אירועי עכבר/מקלדת מהמורה ─────────────
-// מקבל { kind:'move'|'click'|'key', x, y, button, key } ביחס לרזולוציית התלמיד.
-function replayInput(ev) {
-  if (!nativeInput) return false;
-  try {
-    const disp = screen.getPrimaryDisplay().size;
-    if (ev.kind === 'move' || ev.kind === 'click') {
-      // x,y מגיעים מנורמלים 0..1 ביחס למסך המשותף
-      const px = Math.round((ev.x ?? 0) * disp.width);
-      const py = Math.round((ev.y ?? 0) * disp.height);
-      nativeInput.moveMouse(px, py);
-      if (ev.kind === 'click') nativeInput.mouseClick(ev.button || 'left');
-    } else if (ev.kind === 'key' && ev.key) {
-      nativeInput.keyTap(ev.key);
-    } else if (ev.kind === 'type' && ev.text) {
-      nativeInput.typeString(ev.text);
-    }
-    return true;
-  } catch (e) { console.error('replayInput error', e); return false; }
 }
 
 // ════════ גילוי שימוש בכלי AI (רמת מערכת ההפעלה) ════════
@@ -312,7 +349,14 @@ const AI_PATTERNS = [
 ];
 const SNIP_PATTERNS = [ /snipping ?tool/i, /screensketch/i, /screenclip/i, /גזירה/ ];
 
+// אותו דיווח לא נשלח שוב ושוב: חלון AI שנשאר פתוח היה מציף את הלוג ואת צלילי ההתראה כל 2.5 שניות
+const lastFlag = {};
+const FLAG_COOLDOWN_MS = { 'ai-window': 60000, 'snip-tool': 60000 };
 function flagCheat(kind, detail) {
+  const key = kind + '|' + (detail || '');
+  const now = Date.now();
+  if (lastFlag[key] && now - lastFlag[key] < (FLAG_COOLDOWN_MS[kind] || 15000)) return;
+  lastFlag[key] = now;
   // שולח לדף התלמיד, שמעביר לשרת ומציג אזהרה
   if (win && win.webContents) win.webContents.send('ai-cheat', { kind, detail });
 }
@@ -327,7 +371,7 @@ function checkClipboard() {
       if (examQuestionText && txt.length > 25 && questionOverlap(txt)) {
         flagCheat('clip-question', txt.slice(0, 60));
       } else if (txt.length > 0) {
-        flagCheat('clip-text', `${txt.length} תווים: ${txt.slice(0, 50)}`);
+        flagCheat('clip-text', `${txt.length} תווים`);   // רק האורך - לא שולחים את תוכן הלוח של התלמיד
       }
     }
     // תמונה בלוח = סימן חזק ל-Win+Shift+S / PrintScreen
@@ -348,7 +392,10 @@ function questionOverlap(txt) {
 }
 
 // 2) ניטור חלון פעיל - האם כלי AI / snipping tool בקדמת הבמה
+let windowCheckRunning = false;
 function checkActiveWindow() {
+  if (windowCheckRunning) return;   // לא מריצים בדיקה חדשה כל עוד הקודמת רצה
+  windowCheckRunning = true;
   // PowerShell: כותרת החלון הפעיל + שם התהליך
   const ps = `Add-Type @'
 using System;using System.Runtime.InteropServices;using System.Text;
@@ -356,7 +403,8 @@ public class W{[DllImport("user32.dll")]public static extern IntPtr GetForegroun
 [DllImport("user32.dll")]public static extern int GetWindowText(IntPtr h,StringBuilder s,int n);
 [DllImport("user32.dll")]public static extern int GetWindowThreadProcessId(IntPtr h,out int p);}
 '@;$h=[W]::GetForegroundWindow();$sb=New-Object Text.StringBuilder 256;[void][W]::GetWindowText($h,$sb,256);$p=0;[void][W]::GetWindowThreadProcessId($h,[ref]$p);$proc=(Get-Process -Id $p -ErrorAction SilentlyContinue).ProcessName;Write-Output "$($sb.ToString())|$proc"`;
-  exec(`powershell -NoProfile -NonInteractive -Command "${ps.replace(/"/g, '\\"')}"`, { timeout: 4000, windowsHide: true }, (err, stdout) => {
+  exec(`powershell -NoProfile -NonInteractive -Command "${ps.replace(/"/g, '\\"')}"`, { timeout: 8000, windowsHide: true }, (err, stdout) => {
+    windowCheckRunning = false;
     if (err || !stdout) return;
     const line = stdout.trim();
     if (AI_PATTERNS.some(re => re.test(line))) flagCheat('ai-window', line.split('|')[0].slice(0, 60));
@@ -368,7 +416,11 @@ function startCheatDetection() {
   if (detectTimer) return;
   lastClipText = clipboard.readText() || '';
   lastClipImageEmpty = clipboard.readImage().isEmpty();
-  detectTimer = setInterval(() => { checkClipboard(); checkActiveWindow(); }, 2500);
+  let tick = 0;
+  detectTimer = setInterval(() => {
+    checkClipboard();                         // כל 2.5 שניות (זול)
+    if (tick++ % 2 === 0) checkActiveWindow(); // חלון פעיל כל 5 שניות (מריץ PowerShell)
+  }, 2500);
 }
 function stopCheatDetection() {
   if (detectTimer) { clearInterval(detectTimer); detectTimer = null; }
@@ -416,8 +468,7 @@ ipcMain.on('exit-attempt', (e, pass) => {
 function registerExitHotkeys() {
   // יציאה עם סיסמה (לתלמיד - אם הוקלד שם שגוי / סיום מבחן)
   globalShortcut.register('Control+Shift+Q', () => { if (!quitting) promptExitPassword(); });
-  // יציאה מהירה ללא סיסמה (לפיקוח חלש / בדיקות)
-  globalShortcut.register('Control+Shift+X', () => { if (!quitting) doQuit(); });
+  // (הוסר: יציאה מהירה ללא סיסמה - איפשרה לכל תלמיד לצאת מהמבחן)
 }
 
 // 3) יירוט מקש PrintScreen (best-effort - חלק מהמחוות שמורות ל-Windows)
@@ -430,7 +481,7 @@ function registerScreenshotInterception() {
 // ── גשר IPC מדף התלמיד (preload חושף window.examAgent) ─────────
 ipcMain.on('agent-lock-input', (e, on) => setLock(!!on));
 ipcMain.handle('agent-info', () => ({ nativeInput: !!nativeInput, version: app.getVersion() }));
-ipcMain.on('agent-remote-input', (e, ev) => replayInput(ev));
+ipcMain.on('agent-set-exam-hidden', (e, hidden) => setExamHidden(hidden));
 ipcMain.on('agent-quit', () => doQuit());
 ipcMain.on('set-server', (e, raw) => { examUrl = normalizeUrl(raw); saveExamUrl(examUrl); loadExam(); });
 ipcMain.on('reload-exam', () => loadExam());
@@ -445,12 +496,12 @@ ipcMain.on('overlay-countdown', (e, data)  => overlaySend('set-countdown', data)
 ipcMain.on('open-exam', (e, url) => openExamView(url));
 ipcMain.on('close-exam', () => closeExamView());
 ipcMain.on('set-approved-links', (e, urls) => {
-  approvedDomains = (urls || []).map(u => { try { return new URL(u).hostname.replace(/^www\./,''); } catch { return null; } }).filter(Boolean);
+  approvedDomains = (Array.isArray(urls) ? urls : []).map(u => { try { return new URL(u).hostname.replace(/^www\./,''); } catch { return null; } }).filter(Boolean);
+  applyExamBounds();   // פס הקישורים מופיע/נעלם -> משנים את גובה אתר המבחן
 });
 
 // ── אתחול ──────────────────────────────────────────────────────
 app.whenReady().then(() => {
-  loadNativeInput();
   startDetectServer();
   registerExitHotkeys();
   registerScreenshotInterception();

@@ -58,16 +58,16 @@ So the agent must be told the **teacher's IP**. There are three ways, in priorit
 If the exam page fails to load, the app shows a friendly **error screen** with
 **Retry / Change server / Exit** — the student is never trapped on a blank page.
 
-## Making lock/input-block & remote control "real" (next step)
-`main.js → lockInput()` currently blocks shortcuts via Electron `globalShortcut`. For a
-**full** keyboard/mouse freeze and remote control, install a native input library and wire
-it in (marked `TODO` in `main.js`):
-```powershell
-npm install @nut-tree/nut-js   # or: npm install robotjs
-```
-- `lockInput(true)` → engage a low-level input hook / `BlockInput`.
-- Remote control → receive `{x,y,kind}` events from the teacher (over the existing WebSocket
-  or a WebRTC data channel) and replay them with `mouse.setPosition` / `keyboard.type`.
+## Lock / input-block
+`setLock()` in `main.js` blocks common shortcuts via Electron `globalShortcut` and keeps the
+kiosk window on top. While the screen is locked or the teacher is broadcasting their screen,
+the exam site view is hidden so the lock/broadcast layer is visible. Remote control (robotjs)
+was removed: nothing used it and it allowed typing on student PCs.
+
+## Server certificate
+The agent trusts the server's self-signed certificate by pinning its fingerprint on first
+connect (stored in `exam-config.json`). If the teacher regenerates `cert.pem`, students must
+use **Change server** on the error screen (or delete `exam-config.json`) to re-pin.
 
 ## Security / consent — do not skip
 - Show a **persistent visible banner** whenever lock/input-block/remote-control is active.

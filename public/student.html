@@ -129,6 +129,7 @@
 let ws, pc, studentId, studentName, stream;
 let iceServers = [{ urls: 'stun:stun.l.google.com:19302' }];
 let kicked = false;
+let studentToken = null;   // מזהה סודי שהשרת נותן בכניסה - מונע התחזות לתלמיד אחר ומאמת העלאת צילומים
 let screenshotInterval = null;
 let pingInterval = null;
 const SCREENSHOT_INTERVAL_MS = 10000;   // קצב צילומי מסך אוטומטיים (10 שניות - מספיק ל-OCR, חוסך רוחב פס ודיסק)
@@ -238,15 +239,26 @@ function promptLaunchApp() {
 }
 
 function connectWS(onOpen) {
-  ws = new WebSocket(`wss://${location.host}`);
-  ws.onopen = onOpen;
-  ws.onclose = () => {
+  const sock = new WebSocket(`wss://${location.host}`);
+  ws = sock;
+  sock.onopen = onOpen;
+  sock.onclose = () => {
+    if (sock !== ws) return;   // חיבור ישן שהוחלף (למשל אחרי שינוי שם) - לא מתחברים מחדש בגללו
     if (kicked) return;
     setStatus('מנותק - מנסה להתחבר מחדש...', 'red');
     setTimeout(() => connectWS(() => { if (studentName) rejoin(); }), 2000);
   };
-  ws.onerror = () => setStatus('שגיאת חיבור', 'red');
-  ws.onmessage = handleMessage;
+  sock.onerror = () => setStatus('שגיאת חיבור', 'red');
+  sock.onmessage = handleMessage;
+}
+
+// טוקן שמור לפי שם (שורד סגירת לשונית; מאפשר חזרה אחרי ניתוק)
+function loadToken(name) {
+  try { const t = JSON.parse(localStorage.getItem('examToken') || 'null'); return (t && t.name === name) ? t.token : null; }
+  catch { return null; }
+}
+function saveToken(name, token) {
+  try { localStorage.setItem('examToken', JSON.stringify({ name, token })); } catch {}
 }
 
 function joinExam() {
@@ -257,13 +269,14 @@ function joinExam() {
   document.getElementById('joinBtn').disabled = true;
   connectWS(() => {
     setStatus('מחובר לשרת', 'green');
-    ws.send(JSON.stringify({ type: 'student-join', name, usingApp: !!window.examAgent }));
+    studentToken = loadToken(name);
+    ws.send(JSON.stringify({ type: 'student-join', name, token: studentToken, usingApp: !!window.examAgent }));
   });
 }
 
 function rejoin() {
   setStatus('מתחבר מחדש...', 'yellow');
-  ws.send(JSON.stringify({ type: 'student-join', name: studentName, usingApp: !!window.examAgent }));
+  ws.send(JSON.stringify({ type: 'student-join', name: studentName, token: studentToken, usingApp: !!window.examAgent }));
 }
 
 // חזרה למסך הכניסה לתיקון שם שגוי
@@ -274,10 +287,11 @@ function changeName() {
   if (pc) { pc.close(); pc = null; }
   stopAutoScreenshots();
   // ניתוק והודעה לשרת שהתלמיד הנוכחי עוזב (כדי שלא יישאר "רשום")
-  try { if (ws && ws.readyState === 1) { ws.send(JSON.stringify({ type:'leave-rename' })); ws.close(); } } catch {}
+  try { if (ws && ws.readyState === 1) { ws.send(JSON.stringify({ type:'leave-rename' })); const old = ws; ws = null; old.close(); } } catch {}
   // איפוס מצב מקומי
   localStorage.removeItem('examStudentName');
-  studentName = null; studentId = null;
+  try { localStorage.removeItem('examToken'); } catch {}
+  studentName = null; studentId = null; studentToken = null;
   document.getElementById('hiddenScreenVideo').srcObject = null;
   // החזרת מסך הכניסה
   document.getElementById('shareScreen').style.display = 'none';
@@ -294,10 +308,20 @@ function changeName() {
 }
 
 async function handleMessage(e) {
-  const msg = JSON.parse(e.data);
+  let msg; try { msg = JSON.parse(e.data); } catch { return; }
+
+  if (msg.type === 'name-taken') {
+    // השם בשימוש ע"י חיבור פעיל אחר (למשל אחרי נפילת רשת - החיבור הישן עוד לא נסגר)
+    document.getElementById('joinBtn').disabled = false;
+    studentName = null;
+    setStatus('השם הזה כבר מחובר. אם זה אתה - המתן חצי דקה ונסה שוב', 'yellow');
+    showWarning('השם הזה כבר מחובר כרגע. אם זה אתה (למשל אחרי ניתוק) - המתן כ-30 שניות ולחץ שוב על כניסה.');
+    return;
+  }
 
   if (msg.type === 'kicked') {
     kicked = true;
+    window.examAgent?.closeExam?.();   // באפליקציה: סוגרים את אתר המבחן כדי שהודעת ההרחקה תיראה
     localStorage.removeItem('examStudentName');
     document.getElementById('loginScreen').style.display = 'none';
     document.getElementById('shareScreen').style.display = 'none';
@@ -310,6 +334,7 @@ async function handleMessage(e) {
 
   if (msg.type === 'joined') {
     studentId = msg.id;
+    if (msg.token) { studentToken = msg.token; saveToken(msg.name, msg.token); }
     document.getElementById('loginScreen').style.display = 'none';
     document.getElementById('shareScreen').style.display = 'block';
     setStatus(`מחובר כ-${msg.name}`, 'green');
@@ -319,7 +344,11 @@ async function handleMessage(e) {
     if (window.screen?.addEventListener) window.screen.addEventListener('change', checkSecondScreen);
   }
   if (msg.type === 'answer') { if (pc) await pc.setRemoteDescription(msg.answer); }
-  if (msg.type === 'ice') { if (pc && msg.candidate) { try { await pc.addIceCandidate(msg.candidate); } catch {} } }
+  if (msg.type === 'ice') {
+    // מועמדי ICE של שידור המורה שייכים לחיבור השידור, לא לחיבור שיתוף המסך
+    const target = msg.subtype === 'broadcast' ? broadcastPc : pc;
+    if (target && msg.candidate) { try { await target.addIceCandidate(msg.candidate); } catch {} }
+  }
   if (msg.type === 'request-offer') {
     if (stream) { await setupPeerConnection(); await sendOffer(); }
   }
@@ -328,9 +357,14 @@ async function handleMessage(e) {
 
   // ── פקודות שליטה מהמורה ──────────────────────────────
   if (msg.type === 'screen-lock')     setLock(msg.on, msg.message);
-  if (msg.type === 'input-block')     setInputBlock(msg.on);
+  if (msg.type === 'input-block')     setTeacherInputBlock(msg.on);
   if (msg.type === 'teacher-message') { showTeacherMessage(msg.message); window.examAgent?.overlayMessage?.(msg.message); }
-  if (msg.type === 'countdown')       { setCountdown(msg.on, msg.endsAt);  window.examAgent?.overlayCountdown?.({ on: msg.on, endsAt: msg.endsAt }); }
+  if (msg.type === 'countdown') {
+    // השרת שולח זמן שנותר (לא שעון של המורה) - כך הסטיות בין שעוני המחשבים לא משפיעות
+    const endsAt = msg.on && msg.remainingMs > 0 ? Date.now() + msg.remainingMs : 0;
+    setCountdown(msg.on, endsAt);
+    window.examAgent?.overlayCountdown?.({ on: msg.on, endsAt });
+  }
   if (msg.type === 'agent-launch')    promptLaunchApp();
   if (msg.type === 'end-exam')        endExam();
   if (msg.type === 'exam-url')        openEmbeddedExam(msg.url);
@@ -348,9 +382,9 @@ function showExamLinks(links) {
   const bar = document.getElementById('linksBar');
   const box = document.getElementById('linksBtns');
   box.innerHTML = '';
+  // מסירה לאפליקציה את רשימת הדומיינים המאושרים (לסימון ניווט חורג) - גם כשהרשימה התרוקנה
+  window.examAgent?.setApprovedLinks?.((links || []).map(l => l.url));
   if (!links || !links.length) { bar.style.display = 'none'; return; }
-  // מסירה לאפליקציה את רשימת הדומיינים המאושרים (לסימון ניווט חורג)
-  window.examAgent?.setApprovedLinks?.(links.map(l => l.url));
   links.forEach(l => {
     const b = document.createElement('button');
     b.textContent = l.name;
@@ -364,9 +398,11 @@ function showExamLinks(links) {
 // --- פתיחת אתר המבחן ---
 let _embedUrl = null;
 function openEmbeddedExam(url) {
-  if (!url) return;
+  if (!url || !/^https?:\/\//i.test(url)) return;
+  const same = (url === _embedUrl);
   _embedUrl = url;
   // באפליקציה: פתיחה אמיתית מעל הדף (נטען כרגיל, לא לבן). הניטור ממשיך ברקע.
+  // האפליקציה לא טוענת מחדש אם אותו אתר כבר פתוח (חיבור מחדש אחרי ניתוק לא מאפס תשובות)
   if (window.examAgent?.openExam) {
     window.examAgent.openExam(url);
     setStatus('המבחן נפתח - בהצלחה!', 'green');
@@ -375,6 +411,7 @@ function openEmbeddedExam(url) {
   // דפדפן בלבד: ניסיון הטמעה ב-iframe (אתרים רבים חוסמים זאת)
   const frame = document.getElementById('embedFrame');
   const view  = document.getElementById('embedView');
+  if (same && view.style.display === 'flex') return;   // כבר פתוח - לא טוענים מחדש
   frame.src = url;
   view.style.display = 'flex';
   // אם האתר חוסם הטמעה (X-Frame-Options) - נזהה ונציע פתיחה בכרטיסייה
@@ -382,8 +419,13 @@ function openEmbeddedExam(url) {
   frame.onload = () => { loaded = true; };
   setTimeout(() => {
     if (!loaded) {
-      document.getElementById('embedMsg').innerHTML =
-        '⚠️ אתר המבחן חוסם הטמעה. <a href="'+url+'" target="_blank" style="color:#fcd34d;">פתח בכרטיסייה חדשה</a> (הטיימר/הודעות יופיעו רק באפליקציה).';
+      const m = document.getElementById('embedMsg');
+      m.textContent = '⚠️ אתר המבחן חוסם הטמעה. ';
+      const a = document.createElement('a');
+      a.href = url; a.target = '_blank'; a.rel = 'noopener'; a.textContent = 'פתח בכרטיסייה חדשה';
+      a.style.color = '#fcd34d';
+      m.appendChild(a);
+      m.appendChild(document.createTextNode(' (הטיימר/הודעות יופיעו רק באפליקציה).'));
     }
   }, 3500);
 }
@@ -394,12 +436,15 @@ function endExam() {
   stopAutoScreenshots();
   setLock(false);
   document.getElementById('lockOverlay').style.display = 'none';
+  endBroadcast();
   window.examAgent?.closeExam?.();   // סגירת תצוגת אתר המבחן
+  _embedUrl = null;
   showTeacherMessage('המבחן הסתיים. תודה!');
   if (window.examAgent?.quit) setTimeout(() => window.examAgent.quit(), 2500);
 }
 
 // --- נעילת מסך (גרסת דפדפן) ---
+let _teacherBlock = false;   // חסימת קלט שהמורה הפעיל בנפרד מהנעילה
 function setLock(on, message) {
   _locked = on;
   const ov = document.getElementById('lockOverlay');
@@ -407,11 +452,19 @@ function setLock(on, message) {
     if (message) document.getElementById('lockText').textContent = message;
     ov.style.display = 'flex';
     document.documentElement.requestFullscreen?.().catch(() => {});
-    setInputBlock(true);
   } else {
     ov.style.display = 'none';
-    setInputBlock(false);
   }
+  // באפליקציה אתר המבחן מצויר מעל הדף - מסתירים אותו כדי שהנעילה תיראה
+  updateExamVisibility();
+  applyInputBlock();
+}
+function setTeacherInputBlock(on) { _teacherBlock = !!on; applyInputBlock(); }
+function applyInputBlock() { setInputBlock(_locked || _teacherBlock); }
+// אתר המבחן באפליקציה מוסתר בזמן נעילה או שידור מסך מורה
+function updateExamVisibility() {
+  const bcShown = document.getElementById('broadcastOverlay').style.display === 'flex';
+  window.examAgent?.setExamHidden?.(_locked || bcShown);
 }
 
 // --- חסימת קלט בתוך הלשונית ---
@@ -467,9 +520,10 @@ async function handleBroadcastOffer(msg) {
   broadcastPc.ontrack = e => {
     document.getElementById('broadcastVideo').srcObject = e.streams[0];
     document.getElementById('broadcastOverlay').style.display = 'flex';
+    updateExamVisibility();
   };
   broadcastPc.onicecandidate = e => {
-    if (e.candidate && ws.readyState === 1)
+    if (e.candidate && ws && ws.readyState === 1)
       ws.send(JSON.stringify({ type:'ice', subtype:'broadcast', target:'admin', candidate:e.candidate }));
   };
   await broadcastPc.setRemoteDescription(msg.offer);
@@ -481,6 +535,7 @@ function endBroadcast() {
   document.getElementById('broadcastOverlay').style.display = 'none';
   document.getElementById('broadcastVideo').srcObject = null;
   if (broadcastPc) { broadcastPc.close(); broadcastPc = null; }
+  updateExamVisibility();
 }
 
 // --- גילוי חשד: החלפת לשונית, הדבקה, מסך שני ---
@@ -636,7 +691,7 @@ async function setupPeerConnection() {
   pc = new RTCPeerConnection({ iceServers });
   stream.getTracks().forEach(track => pc.addTrack(track, stream));
   pc.onicecandidate = e => {
-    if (e.candidate && ws.readyState === 1)
+    if (e.candidate && ws && ws.readyState === 1)
       ws.send(JSON.stringify({ type: 'ice', target: 'admin', candidate: e.candidate }));
   };
 }
@@ -685,7 +740,7 @@ async function captureAndUploadScreenshot() {
       if (!blob) return;
       fetch('/upload-screenshot', {
         method: 'POST',
-        headers: { 'Content-Type': 'image/jpeg', 'X-Student-Name': encodeURIComponent(studentName) },
+        headers: { 'Content-Type': 'image/jpeg', 'X-Student-Name': encodeURIComponent(studentName), 'X-Student-Token': studentToken || '' },
         body: blob
       }).catch(() => {});
     }, 'image/jpeg', 0.6);

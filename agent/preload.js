@@ -5,12 +5,12 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('examAgent', {
   present: true,
-  version: '1.0.0',
+  version: '1.1.0',
   info: () => ipcRenderer.invoke('agent-info'),
   // חסימת/שחרור קלט אמיתית
   lockInput: (on) => ipcRenderer.send('agent-lock-input', on),
-  // השמעת אירוע קלט מהמורה (שליטה מרחוק)
-  remoteInput: (ev) => ipcRenderer.send('agent-remote-input', ev),
+  // הסתרת אתר המבחן זמנית (נעילת מסך / שידור מורה) כדי שהשכבות של הדף ייראו
+  setExamHidden: (hidden) => ipcRenderer.send('agent-set-exam-hidden', !!hidden),
   // יציאה מהאפליקציה (סיום מבחן מהמורה)
   quit: () => ipcRenderer.send('agent-quit'),
   // ניהול כתובת שרת / טעינה מחדש (משמש את מסכי ההגדרה והשגיאה)
