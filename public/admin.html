@@ -166,6 +166,7 @@
   <button class="secondary" onclick="control('agent-launch')">🚀 הפעל אפליקציה</button>
   <button class="secondary" onclick="unkickStudent()">↩️ בטל חסימה</button>
   <button class="secondary" onclick="endExam()" style="border-color:rgba(239,68,68,0.5);color:#fca5a5;">🏁 סיים מבחן</button>
+  <button class="secondary" onclick="openReview()" style="border-color:rgba(245,158,11,0.6);color:#fcd34d;">🔍 סקירה</button>
   <button class="secondary" onclick="location.href='/admin-logout'">🚪 יציאה</button>
   <span style="color:var(--text2);font-size:11px;">(פעולות חלות על הנבחרים, או על כולם אם אין בחירה)</span>
 </div>
@@ -197,6 +198,43 @@
     </div>
   </div>
 </div>
+
+<style>
+  #reviewModal{display:none;position:fixed;inset:0;z-index:5000;background:rgba(2,6,23,.96);overflow:auto;padding:20px 24px;color:#e2e8f0;font-family:inherit;}
+  #reviewModal .rv-head{display:flex;align-items:center;gap:14px;margin-bottom:14px;flex-wrap:wrap;}
+  #reviewModal h2{margin:0;font-size:20px;}
+  #reviewModal .rv-btn{background:#1e293b;border:1px solid #334155;color:#e2e8f0;border-radius:8px;padding:6px 14px;cursor:pointer;font-family:inherit;}
+  .rv-row{background:#0f172a;border:1px solid #1e293b;border-radius:10px;margin-bottom:8px;overflow:hidden;}
+  .rv-summary{display:flex;align-items:center;gap:12px;padding:10px 14px;cursor:pointer;flex-wrap:wrap;}
+  .rv-badge{min-width:46px;text-align:center;border-radius:8px;padding:4px 10px;font-weight:700;font-size:14px;}
+  .rv-high{background:#7f1d1d;color:#fecaca;} .rv-medium{background:#78350f;color:#fde68a;} .rv-low{background:#14532d;color:#bbf7d0;}
+  .rv-name{font-weight:600;font-size:15px;flex:1;min-width:140px;}
+  .rv-chip{font-size:12px;background:#1e293b;border-radius:6px;padding:2px 8px;color:#cbd5e1;}
+  .rv-detail{display:none;padding:6px 14px 14px;border-top:1px solid #1e293b;}
+  .rv-row.open .rv-detail{display:block;}
+  .rv-ev{display:flex;gap:10px;align-items:flex-start;padding:6px 0;border-bottom:1px solid #111827;font-size:13px;}
+  .rv-time{color:#64748b;font-family:monospace;flex-shrink:0;}
+  .rv-ev.warn .rv-text{color:#fcd34d;} .rv-ev.bad .rv-text{color:#fca5a5;}
+  .rv-shots{display:flex;gap:6px;flex-wrap:wrap;margin-top:4px;}
+  .rv-shots img{height:84px;border-radius:6px;border:1px solid #334155;cursor:zoom-in;}
+  #rvLightbox{display:none;position:fixed;inset:0;z-index:6000;background:rgba(0,0,0,.92);align-items:center;justify-content:center;cursor:zoom-out;}
+  #rvLightbox img{max-width:96vw;max-height:96vh;}
+</style>
+<div id="reviewModal">
+  <div class="rv-head">
+    <h2>🔍 סקירת חשד</h2>
+    <label style="font-size:13px;"><input type="checkbox" id="rvOnlyFlagged"> רק עם חשד</label>
+    <button class="rv-btn" onclick="loadReview()">↻ רענן</button>
+    <span id="rvStamp" style="color:#64748b;font-size:12px;"></span>
+    <button class="rv-btn" style="margin-inline-start:auto;" onclick="closeReview()">✕ סגור</button>
+  </div>
+  <div style="font-size:12px;color:#94a3b8;margin-bottom:12px;line-height:1.7;">
+    הציון מצטבר מדגלים: כלי AI פתוח (10), העתקת שאלה (8), זיהוי סורק (8), יציאה ממסך נעול (4), שיתוף חלקי (4), ועוד.
+    מעל 15 = גבוה, מעל 6 = בינוני. תלמיד בדפדפן בלבד מקבל +5 כי אי אפשר לגלות אצלו כלי AI בזמן אמת. הציון הוא כיוון לבדיקה, לא הוכחה.
+  </div>
+  <div id="rvList"></div>
+</div>
+<div id="rvLightbox" onclick="this.style.display='none'"><img id="rvLightboxImg" alt=""></div>
 
 <script>
 const ws = new WebSocket(`wss://${location.host}`);
@@ -789,6 +827,90 @@ async function startBroadcastTo(id) {
   const offer = await pc.createOffer();
   await pc.setLocalDescription(offer);
   ws.send(JSON.stringify({ type:'offer', subtype:'broadcast', target:id, offer }));
+}
+
+// ════════ סקירת חשד ════════
+const KIND_LABELS = {
+  'ai-ai-window':'כלי AI פתוח','ai-clip-question':'העתקת שאלת מבחן','scan-ai':'הסורק זיהה AI','ai-snip-tool':'כלי גזירה',
+  'ai-printscreen':'PrintScreen','ai-clip-image':'תמונה בלוח','ai-clip-text':'טקסט בלוח','ai-off-list-nav':'אתר לא מאושר',
+  'paste':'הדבקה','tab-hidden':'עזיבת לשונית','second-screen':'מסך שני','lock-escape':'יציאה ממסך נעול',
+  'stop-share':'הפסקת שיתוף','partial-share':'שיתוף חלקי','disconnect':'ניתוקים','scan-offlist':'אתר שלא ברשימה (סורק)',
+};
+const BAD_KINDS = new Set(['ai-ai-window','ai-clip-question','scan-ai','lock-escape','partial-share']);
+const WARN_KINDS = new Set(['ai-snip-tool','ai-printscreen','ai-clip-image','ai-off-list-nav','second-screen','stop-share','paste','scan-offlist']);
+let reviewTimer = null;
+const rvOpen = new Set();   // שמות שורות פתוחות - נשמר בין רענונים
+
+function openReview() {
+  document.getElementById('reviewModal').style.display = 'block';
+  loadReview();
+  reviewTimer = setInterval(loadReview, 10000);
+}
+function closeReview() {
+  document.getElementById('reviewModal').style.display = 'none';
+  clearInterval(reviewTimer); reviewTimer = null;
+}
+document.addEventListener('keydown', e => { if (e.key === 'Escape') { document.getElementById('rvLightbox').style.display = 'none'; } });
+document.getElementById('rvOnlyFlagged').addEventListener('change', () => loadReview());
+
+function el(tag, cls, text) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text != null) e.textContent = text;   // textContent בלבד - טקסט מתלמידים לא מפורש כ-HTML
+  return e;
+}
+
+async function loadReview() {
+  let data;
+  try {
+    const r = await fetch('/review-data', { cache: 'no-store' });
+    if (r.status === 403) { location.reload(); return; }
+    data = await r.json();
+  } catch { return; }
+  const only = document.getElementById('rvOnlyFlagged').checked;
+  const list = document.getElementById('rvList');
+  list.textContent = '';
+  document.getElementById('rvStamp').textContent = 'עודכן ' + new Date(data.now).toLocaleTimeString('he-IL');
+  const rows = data.students.filter(st => !only || st.score > 0);
+  if (!rows.length) list.appendChild(el('div', '', only ? 'אין תלמידים עם חשד כרגע 👍' : 'אין עדיין תלמידים.'));
+  rows.forEach(st => {
+    const row = el('div', 'rv-row' + (rvOpen.has(st.name) ? ' open' : ''));
+    const sum = el('div', 'rv-summary');
+    sum.appendChild(el('div', 'rv-badge rv-' + st.level, String(st.score)));
+    sum.appendChild(el('div', 'rv-name', st.name + (st.online ? '' : '  (מנותק)')));
+    if (st.usingApp === false) sum.appendChild(el('span', 'rv-chip', '🌐 דפדפן בלבד'));
+    Object.entries(st.counts).filter(([k]) => KIND_LABELS[k]).sort((a, b) => b[1] - a[1]).forEach(([k, n]) => {
+      sum.appendChild(el('span', 'rv-chip', KIND_LABELS[k] + ' ×' + n));
+    });
+    sum.onclick = () => { row.classList.toggle('open'); row.classList.contains('open') ? rvOpen.add(st.name) : rvOpen.delete(st.name); };
+    row.appendChild(sum);
+
+    const det = el('div', 'rv-detail');
+    det.appendChild(el('div', 'rv-time', 'IP ' + st.ip + (st.autoShots ? ' · ' + st.autoShots + ' צילומים אוטומטיים' : '')));
+    st.events.slice().reverse().forEach(ev => {
+      const cls = BAD_KINDS.has(ev.kind) ? ' bad' : WARN_KINDS.has(ev.kind) ? ' warn' : '';
+      const line = el('div', 'rv-ev' + cls);
+      line.appendChild(el('span', 'rv-time', new Date(ev.time).toLocaleTimeString('he-IL')));
+      const body = el('div', '');
+      body.appendChild(el('div', 'rv-text', ev.event));
+      if (ev.shots && ev.shots.length) {
+        const shots = el('div', 'rv-shots');
+        ev.shots.forEach(rel => {
+          const img = document.createElement('img');
+          img.loading = 'lazy';
+          img.src = '/shot?p=' + encodeURIComponent(rel);
+          img.alt = 'ראיה';
+          img.onclick = e => { e.stopPropagation(); document.getElementById('rvLightboxImg').src = img.src; document.getElementById('rvLightbox').style.display = 'flex'; };
+          shots.appendChild(img);
+        });
+        body.appendChild(shots);
+      }
+      line.appendChild(body);
+      det.appendChild(line);
+    });
+    row.appendChild(det);
+    list.appendChild(row);
+  });
 }
 
 async function handleBroadcastAnswer(msg) {

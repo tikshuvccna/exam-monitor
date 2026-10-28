@@ -284,7 +284,7 @@ def is_ai_tab_title(text: str) -> tuple:
 #  SINGLE IMAGE SCAN
 # ============================================================
 
-def scan_single_image(image_path, rules: list, ai_detection: bool) -> tuple:
+def scan_single_image(image_path, rules: list, ai_detection: bool, fast: bool = False) -> tuple:
     try:
         with open(image_path, "rb") as f:
             data = f.read()
@@ -312,7 +312,8 @@ def scan_single_image(image_path, rules: list, ai_detection: bool) -> tuple:
 
     # ── Step 2: Address bar (anchor-based URL extraction) ─────
     all_urls: set = set()
-    for ratio in ADDRESS_BAR_RATIOS:
+    # fast mode (live watching): one address-bar crop instead of four
+    for ratio in ([0.07] if fast else ADDRESS_BAR_RATIOS):
         crop_h = int(height * ratio)
         strip  = img[0:crop_h, 0:width]
         text   = ocr_region(strip)
@@ -477,7 +478,48 @@ def ask_ai_detection() -> bool:
 # ============================================================
 #  ENTRY POINT
 # ============================================================
+def image_signature(path) -> tuple:
+    """16x9 grayscale thumbnail; identical consecutive frames are skipped in watch mode."""
+    with open(path, "rb") as f:
+        img = cv2.imdecode(np.frombuffer(f.read(), dtype=np.uint8), cv2.IMREAD_GRAYSCALE)
+    if img is None:
+        return None
+    small = cv2.resize(img, (16, 9), interpolation=cv2.INTER_AREA)
+    return tuple((small // 8).flatten().tolist())    # coarse buckets -> tolerant to JPEG noise
+
+
+def run_watch(args):
+    from scanner_watch import watch
+    rules = [parse_rule(r) for r in (args.allow or "").split(",") if r.strip()]
+
+    def scan_fn(path):
+        violations, _raw = scan_single_image(path, rules, True, fast=True)
+        if violations is None:
+            return None
+        ai = [v["url"] for v in violations if v["reason"] == "AI service"]
+        blocked = [v["url"] for v in violations if v["reason"] != "AI service"] if rules else []
+        return ai, blocked
+
+    watch(args.folder, scan_fn, image_signature, args.server, args.key,
+          include_existing=args.include_existing)
+
+
 if __name__ == "__main__":
+    import argparse
+    ap = argparse.ArgumentParser(description="Exam screenshot scanner (batch or live watch).")
+    ap.add_argument("--watch", action="store_true", help="live mode: scan new screenshots and report to the server")
+    ap.add_argument("--server", default="https://localhost:4555", help="exam server address")
+    ap.add_argument("--key", default="", help="scannerKey from config.json (printed by the server at start-up)")
+    ap.add_argument("--folder", default="screenshots", help="screenshots folder to watch")
+    ap.add_argument("--allow", default="", help="comma-separated allowed sites (live mode flags others); empty = AI check only")
+    ap.add_argument("--include-existing", action="store_true", help="also scan images that already exist")
+    cli = ap.parse_args()
+    if cli.watch:
+        if not cli.key:
+            raise SystemExit("--key is required in --watch mode (see the server start-up message).")
+        run_watch(cli)
+        raise SystemExit(0)
+
     allow_rules  = get_allowed_rules()
     ai_detection = ask_ai_detection()
 

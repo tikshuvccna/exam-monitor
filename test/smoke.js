@@ -314,6 +314,87 @@ async function main() {
   ok(rep.body.includes(`"'=HYPERLINK`) && !/(^|,)"=HYPERLINK/m.test(rep.body), 'CSV cell starting with = is neutralised');
   evilName.c.close();
 
+  // ── 10b. Evidence, review, scoring, scanner alerts ───────────
+  console.log('\nEvidence & review');
+  const reviewOf = async name => {
+    const r = await http('GET', '/review-data', { headers: { Cookie: good.cookie } });
+    return JSON.parse(r.body).students.find(s => s.name === name);
+  };
+  const ev = (name, token, kind, body = jpeg) => http('POST', '/upload-screenshot', { headers: { 'X-Student-Name': encodeURIComponent(name), 'X-Student-Token': token, 'X-Evidence-Kind': kind }, body });
+  ok((await http('GET', '/review-data')).status === 403, 'review data needs login');
+  ok((await http('GET', '/shot?p=x')).status === 403, 'shot viewer needs login');
+
+  victim.c.send({ type: 'event', kind: 'ai-ai-window', detail: 'ChatGPT - Google Chrome' });
+  await sleep(200);
+  admin.drain();
+  ok((await ev('Victim Person', victim.j.token, 'ai-ai-window')).status === 200, 'evidence accepted even when auto-shots are off');
+  ok((await ev('Victim Person', victim.j.token, 'bogus-kind')).status === 400, 'unknown evidence kind rejected');
+  ok((await ev('Victim Person', victim.j.token, 'ai-ai-window')).status === 204, 'evidence burst rate-limited');
+  ok((await ev('Victim Person', 'f'.repeat(32), 'ai-ai-window')).status === 403, 'evidence needs the student token');
+  let rv = await reviewOf('Victim Person');
+  const aiEv = rv && rv.events.filter(e => e.kind === 'ai-ai-window');
+  ok(aiEv && aiEv.length === 1 && aiEv[0].shots && aiEv[0].shots.length === 1, 'evidence attached to the flag event', JSON.stringify(aiEv));
+  ok(rv && rv.score >= 10 && rv.level === 'medium', 'AI window gives a medium score', rv && rv.score + '/' + rv.level);
+
+  const shot = await http('GET', '/shot?p=' + encodeURIComponent(aiEv[0].shots[0]), { headers: { Cookie: good.cookie } });
+  ok(shot.status === 200 && shot.headers['content-type'] === 'image/jpeg', 'teacher can view the evidence image');
+  for (const bad of ['../../config.json', '2026-01-01/../../server.js', '2026-01-01/x/..%2f..%2fconfig.json', 'a/b/c.jpg', '2026-01-01/x/y.html']) {
+    const r = await http('GET', '/shot?p=' + encodeURIComponent(bad), { headers: { Cookie: good.cookie } });
+    ok(r.status === 404 && !r.body.includes(PASS), `shot viewer rejects ${bad}`, r.status);
+  }
+
+  // an event flagged in the browser (paste) and its evidence merge into one timeline entry
+  victim.c.send({ type: 'event', kind: 'paste', length: 50, preview: '<b>x</b>' });
+  await sleep(150);
+  await ev('Victim Person', victim.j.token, 'paste');
+  rv = await reviewOf('Victim Person');
+  const pasteEv = rv.events.filter(e => e.kind === 'paste');
+  ok(pasteEv.length === 1 && pasteEv[0].shots && pasteEv[0].shots.length === 1, 'paste flag + evidence merged into one entry');
+
+  // scoring: browser-only students get the extra points; counts are capped
+  const web = client(); await web.open();
+  web.send({ type: 'student-join', name: 'Browser Only', usingApp: false });
+  const wj = await web.next(type('joined'));
+  for (let i = 0; i < 12; i++) web.send({ type: 'event', kind: 'tab-hidden' });
+  await sleep(300);
+  const wrv = await reviewOf('Browser Only');
+  ok(wrv && wrv.score === 5 + 5, 'score = browser-only 5 + tab-hidden capped at 5', wrv && wrv.score);
+  ok(rv.score > wrv.score || rv.level !== 'low', 'AI flag outranks noisy tab switching');
+  const order = JSON.parse((await http('GET', '/review-data', { headers: { Cookie: good.cookie } })).body).students.map(s => s.score);
+  ok(order.every((v, i) => i === 0 || order[i - 1] >= v), 'review list sorted by score');
+
+  // scanner alerts
+  const cfg = JSON.parse(fs.readFileSync(path.join(tmp, 'config.json'), 'utf8'));
+  ok(typeof cfg.scannerKey === 'string' && cfg.scannerKey.length >= 16, 'scannerKey generated into config.json');
+  const alertReq = (b) => http('POST', '/scan-alert', { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) });
+  ok((await alertReq({ key: 'nope', student: 'Victim Person', ai: ['x'] })).status === 403, 'scan-alert refuses a wrong key');
+  ok((await alertReq({ key: cfg.scannerKey, student: 'Nobody Real', ai: ['x'] })).status === 404, 'scan-alert refuses unknown student');
+  admin.drain();
+  const sa = await alertReq({ key: cfg.scannerKey, student: 'Victim Person', ai: ['chatgpt'], blocked: [], file: aiEv[0].shots[0] });
+  ok(sa.status === 200, 'scan-alert accepted');
+  ok(!!(await admin.next(m => m.type === 'flag' && m.kind === 'scan-ai')), 'teacher gets a live flag from the scanner');
+  rv = await reviewOf('Victim Person');
+  ok(rv.counts['scan-ai'] === 1 && rv.events.some(e => e.kind === 'scan-ai' && e.shots), 'scanner finding stored with its screenshot');
+  ok(rv.level === 'high', 'AI window + scanner hit = high suspicion', rv.score);
+
+  // live scanner script end-to-end (needs Python; skipped if not installed)
+  const py = ['python', 'python3', 'py'].find(c => { try { execFileSync(c, ['--version'], { stdio: 'ignore' }); return true; } catch { return false; } });
+  if (py) {
+    let out = '';
+    try {
+      out = execFileSync(py, [path.join(__dirname, 'test_watch.py'), `https://127.0.0.1:${PORT}`, cfg.scannerKey, path.join(tmp, 'screenshots'), 'Victim Person'], { encoding: 'utf8', env: { ...process.env, PYTHONIOENCODING: 'utf-8' } });
+    } catch (e) { out = (e.stdout || '') + (e.stderr || ''); }
+    ok(/0 failed/.test(out), 'scanner_watch posts real alerts (python e2e)', out.slice(-300));
+    await sleep(300);
+    rv = await reviewOf('Victim Person');
+    ok(rv.counts['scan-ai'] === 2, 'alert from the Python watcher reached the review list', JSON.stringify(rv.counts));
+  } else console.log('  - python not found, skipping scanner e2e');
+
+  // report carries suspicion columns
+  const rep2 = await http('GET', '/download-report', { headers: { Cookie: good.cookie } });
+  ok(rep2.body.includes('ציון חשד') && rep2.body.includes('צילומי ראיה'), 'CSV report has suspicion score columns');
+  web.close();
+
   // ── 11. Login throttling (last: it blocks this IP for a minute) ─
   console.log('\nLogin throttling');
   let blocked = false;

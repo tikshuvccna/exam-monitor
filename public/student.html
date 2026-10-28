@@ -132,7 +132,9 @@ let kicked = false;
 let studentToken = null;   // מזהה סודי שהשרת נותן בכניסה - מונע התחזות לתלמיד אחר ומאמת העלאת צילומים
 let screenshotInterval = null;
 let pingInterval = null;
-const SCREENSHOT_INTERVAL_MS = 10000;   // קצב צילומי מסך אוטומטיים (10 שניות - מספיק ל-OCR, חוסך רוחב פס ודיסק)
+const SCREENSHOT_INTERVAL_MS = 15000;   // דגימת מסך אוטומטית כל 15 שניות; צילום זהה לקודם לא נשמר (חוסך דיסק)
+const SCREENSHOT_FORCE_MS    = 120000;  // גם אם המסך לא השתנה - צילום אחד לפחות כל 2 דקות
+const AUTO_SHOT_MAX_WIDTH    = 1280;    // צילומים אוטומטיים מוקטנים; צילומי ראיה בגודל מלא
 
 // זיהוי מכשיר נייד - בטלפונים אין שיתוף מסך, נופלים למצב מצלמה
 const isMobile = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent)
@@ -539,7 +541,10 @@ function endBroadcast() {
 }
 
 // --- גילוי חשד: החלפת לשונית, הדבקה, מסך שני ---
-function reportEvent(obj) { if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type:'event', ...obj })); }
+function reportEvent(obj) {
+  if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type:'event', ...obj }));
+  if (obj && obj.kind) captureEvidence(obj.kind);   // כל דגל מגיע עם צילום מסך כראיה
+}
 
 document.addEventListener('visibilitychange', () => {
   if (!studentId) return;
@@ -721,32 +726,77 @@ function stopShare(forced = false) {
   document.getElementById('shareBtn').onclick     = startShare;
 }
 
+// טביעת אצבע קטנה של המסך (32x18 גווני אפור) - מזהה אם המסך השתנה מאז הצילום הקודם
+let _lastShotSig = null, _lastShotAt = 0;
+function frameSignature(video) {
+  const c = document.createElement('canvas');
+  c.width = 32; c.height = 18;
+  const x = c.getContext('2d', { willReadFrequently: true });
+  x.drawImage(video, 0, 0, 32, 18);
+  const d = x.getImageData(0, 0, 32, 18).data;
+  const sig = new Uint8Array(32 * 18);
+  for (let i = 0; i < sig.length; i++) sig[i] = (d[i*4] * 0.3 + d[i*4+1] * 0.59 + d[i*4+2] * 0.11) | 0;
+  return sig;
+}
+function sigDiff(a, b) {
+  let sum = 0;
+  for (let i = 0; i < a.length; i++) sum += Math.abs(a[i] - b[i]);
+  return sum / a.length;    // 0..255
+}
+
+function drawFrame(video, maxWidth) {
+  const vw = video.videoWidth || 1920, vh = video.videoHeight || 1080;
+  if (!vw || !vh) return null;
+  const scale = maxWidth && vw > maxWidth ? maxWidth / vw : 1;
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.round(vw * scale);
+  canvas.height = Math.round(vh * scale);
+  canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
+  return canvas;
+}
+
+function uploadShot(canvas, quality, evidenceKind) {
+  canvas.toBlob(blob => {
+    if (!blob || !studentName) return;
+    const headers = { 'Content-Type': 'image/jpeg', 'X-Student-Name': encodeURIComponent(studentName), 'X-Student-Token': studentToken || '' };
+    if (evidenceKind) headers['X-Evidence-Kind'] = evidenceKind;
+    fetch('/upload-screenshot', { method: 'POST', headers, body: blob }).catch(() => {});
+  }, 'image/jpeg', quality);
+}
+
 async function captureAndUploadScreenshot() {
   if (!stream || !studentName) return;
   const video = document.getElementById('hiddenScreenVideo');
   if (!video || !video.srcObject) return;
-  
   try {
-    const canvas = document.createElement('canvas');
-    canvas.width = video.videoWidth || 1920;
-    canvas.height = video.videoHeight || 1080;
-    
-    if (canvas.width === 0) return; 
-
-    const ctx = canvas.getContext('2d');
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-    
-    canvas.toBlob(blob => {
-      if (!blob) return;
-      fetch('/upload-screenshot', {
-        method: 'POST',
-        headers: { 'Content-Type': 'image/jpeg', 'X-Student-Name': encodeURIComponent(studentName), 'X-Student-Token': studentToken || '' },
-        body: blob
-      }).catch(() => {});
-    }, 'image/jpeg', 0.6);
+    const sig = frameSignature(video);
+    const now = Date.now();
+    // מסך שלא השתנה (ממוצע הפרש קטן) לא נשמר שוב - אלא אם עבר זמן רב
+    if (_lastShotSig && sigDiff(sig, _lastShotSig) < 2 && now - _lastShotAt < SCREENSHOT_FORCE_MS) return;
+    const canvas = drawFrame(video, AUTO_SHOT_MAX_WIDTH);
+    if (!canvas) return;
+    _lastShotSig = sig; _lastShotAt = now;
+    uploadShot(canvas, 0.6);
   } catch (e) {
     console.error('Screenshot logic error', e);
   }
+}
+
+// צילום ראיה: בעת דגל חשד - מיד תמונה בגודל מלא, ועוד אחת אחרי 4 שניות ("מה קרה אחר כך")
+const EVIDENCE_KINDS = ['tab-hidden','second-screen','paste','lock-escape','ai-clip-question','ai-clip-text','ai-clip-image','ai-ai-window','ai-snip-tool','ai-printscreen','ai-off-list-nav'];
+const _lastEvidence = {};
+function captureEvidence(kind) {
+  if (!EVIDENCE_KINDS.includes(kind) || !stream || !studentName) return;
+  const now = Date.now();
+  if (_lastEvidence[kind] && now - _lastEvidence[kind] < 8000) return;   // לא מציפים באותו סוג
+  _lastEvidence[kind] = now;
+  const shoot = () => {
+    const video = document.getElementById('hiddenScreenVideo');
+    if (!video || !video.srcObject) return;
+    try { const c = drawFrame(video, 1920); if (c) uploadShot(c, 0.8, kind); } catch {}
+  };
+  shoot();
+  setTimeout(shoot, 4000);
 }
 
 function startAutoScreenshots() {

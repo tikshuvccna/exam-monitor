@@ -10,3 +10,5 @@ exam_scan_log.csv
 *.zip
 agent/dist/
 agent/node_modules/
+__pycache__/
+*.pyc

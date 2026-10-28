@@ -25,6 +25,15 @@ catch {
   catch { console.warn('⚠️  לא ניתן ליצור config.json - הסיסמה תקפה להפעלה זו בלבד.'); }
 }
 
+// מפתח לסורק החיצוני (scanner.py --watch) כדי שיוכל לדווח התראות. נוצר פעם אחת ונשמר ב-config.json
+if (!cfg.scannerKey) {
+  cfg.scannerKey = crypto.randomBytes(12).toString('hex');
+  try { if (fs.existsSync(CONFIG_PATH)) fs.writeFileSync(CONFIG_PATH, JSON.stringify(cfg, null, 2)); } catch {}
+}
+const SCANNER_KEY = String(cfg.scannerKey);
+// מחיקת צילומים ישנים (ימים). 0 = לא למחוק לעולם (ברירת מחדל)
+const RETENTION_DAYS = Math.max(0, parseInt(cfg.screenshotRetentionDays) || 0);
+
 const PORT           = process.env.EXAM_PORT       || cfg.port          || 4555;
 const TURN_PORT      = process.env.EXAM_TURN_PORT  || cfg.turnPort      || 3478;
 const TURN_USER      = process.env.EXAM_TURN_USER  || cfg.turnUser      || 'examuser';
@@ -186,7 +195,7 @@ function saveStudentFile() {
   const studentHeader = [
     'שם תלמיד', 'כתובת IP', 'רזולוציה מסך', 'שעת כניסה ראשונה',
     'שעת יציאה אחרונה', 'זמן שהייה כולל', 'מספר התנתקויות',
-    'שיתוף חלקי?', 'הועף?', 'כל האירועים',
+    'שיתוף חלקי?', 'הועף?', 'ציון חשד', 'רמת חשד', 'צילומי ראיה', 'כל האירועים',
   ];
 
   const studentRows = allSt.map(s => {
@@ -198,11 +207,15 @@ function saveStudentFile() {
     const partial     = evts.some(e => e.event.includes('שיתוף חלקי')) ? 'כן ⚠️' : 'לא';
     const kicked      = evts.some(e => e.event.includes('הועף'))        ? 'כן 🚫' : 'לא';
     const evtStr      = evts.map(e => `${new Date(e.time).toLocaleTimeString('he-IL')}: ${e.event}`).join(' | ');
+    const live        = Object.values(students).find(x => x.name === s.name);
+    const sus         = suspicionOf(s, live ? !!live.usingApp : undefined);
+    const shotCount   = evts.reduce((n, e) => n + (e.shots ? e.shots.length : 0), 0);
+    const levelHe     = { high: 'גבוה', medium: 'בינוני', low: 'נמוך' }[sus.level];
     return [
       s.name, s.ip, s.resolution||'-',
       new Date(s.firstSeen).toLocaleString('he-IL'),
       new Date(s.lastSeen).toLocaleString('he-IL'),
-      dur, disconnects, partial, kicked, evtStr,
+      dur, disconnects, partial, kicked, sus.score, levelHe, shotCount, evtStr,
     ];
   });
 
@@ -236,12 +249,48 @@ function recordStudent(s) {
   scheduleSave();
 }
 
-function recordStudentEvent(name, event) {
+// kind: קטגוריה לניקוד/סינון. extra.shots: צילומי ראיה (נתיבים יחסיים)
+function recordStudentEvent(name, event, kind, extra) {
   if (persistentStudents[name]) {
-    persistentStudents[name].events.push({ event, time: new Date().toISOString() });
+    const ev = { event, time: new Date().toISOString(), kind: kind || 'info' };
+    if (extra && extra.shots) ev.shots = extra.shots.slice(0, 4);
+    persistentStudents[name].events.push(ev);
     persistentStudents[name].lastSeen = new Date().toISOString();
     scheduleSave();
+    return ev;
   }
+  return null;
+}
+
+// ── ניקוד חשד ─────────────────────────────────────────────────
+// weight = נקודות לכל אירוע; cap = כמה אירועים מהסוג נספרים (רעש כמו מעבר לשונית לא מנפח את הציון)
+const SUSPICION = {
+  'ai-ai-window':       { weight: 10, cap: 3 },
+  'ai-clip-question':   { weight: 8,  cap: 3 },
+  'scan-ai':            { weight: 8,  cap: 3 },
+  'ai-snip-tool':       { weight: 4,  cap: 3 },
+  'lock-escape':        { weight: 4,  cap: 3 },
+  'partial-share':      { weight: 4,  cap: 2 },
+  'ai-printscreen':     { weight: 3,  cap: 3 },
+  'ai-clip-image':      { weight: 3,  cap: 3 },
+  'ai-off-list-nav':    { weight: 3,  cap: 4 },
+  'second-screen':      { weight: 3,  cap: 2 },
+  'stop-share':         { weight: 3,  cap: 3 },
+  'paste':              { weight: 2,  cap: 5 },
+  'scan-offlist':       { weight: 2,  cap: 3 },
+  'ai-clip-text':       { weight: 1,  cap: 5 },
+  'tab-hidden':         { weight: 1,  cap: 5 },
+  'disconnect':         { weight: 1,  cap: 5 },
+};
+const BROWSER_ONLY_POINTS = 5;   // בלי האפליקציה אי אפשר לגלות כלי AI בזמן אמת
+function suspicionOf(p, usingApp) {
+  const counts = {};
+  (p.events || []).forEach(e => { if (e.kind) counts[e.kind] = (counts[e.kind] || 0) + 1; });
+  let score = 0;
+  Object.keys(SUSPICION).forEach(k => { if (counts[k]) score += SUSPICION[k].weight * Math.min(counts[k], SUSPICION[k].cap); });
+  if (usingApp === false) score += BROWSER_ONLY_POINTS;
+  const level = score >= 15 ? 'high' : score >= 6 ? 'medium' : 'low';
+  return { score, level, counts };
 }
 
 fs.appendFileSync(LOG_FILE, `${'='.repeat(60)}\nמבחן התחיל: ${new Date().toLocaleString('he-IL')}\n${'='.repeat(60)}\n`);
@@ -309,15 +358,51 @@ function todayStr() {
 function safeFolderName(name, fallback) {
   return String(name || '').replace(/[^א-תa-zA-Z0-9_\- ]/g, '').trim().slice(0, 60) || fallback;
 }
+const SHOTS_ROOT = path.join(__dirname, 'screenshots');
+// מחזיר נתיב יחסי "תאריך/תלמיד/קובץ" (לשימוש בקישורי צפייה), או null
+let shotSeq = 0;
 function saveShot(studentName, buf, kind, fallback) {
   const safe = safeFolderName(studentName, fallback);
-  const shotsRoot = path.join(__dirname, 'screenshots');
-  const studentDir = path.join(shotsRoot, todayStr(), safe);
-  if (!isInside(shotsRoot, studentDir)) return false;
+  const day = todayStr();
+  const studentDir = path.join(SHOTS_ROOT, day, safe);
+  if (!isInside(SHOTS_ROOT, studentDir)) return null;
   fs.mkdirSync(studentDir, { recursive: true });
-  fs.writeFile(path.join(studentDir, `${safe}_${makeTimestamp()}_${kind}.jpg`), buf, () => {});
-  return true;
+  const file = `${safe}_${makeTimestamp()}_${String(++shotSeq % 1000).padStart(3, '0')}_${kind}.jpg`;
+  fs.writeFile(path.join(studentDir, file), buf, () => {});
+  return `${day}/${safe}/${file}`;
 }
+// בדיקת נתיב יחסי שהגיע מבחוץ -> נתיב מלא בטוח, או null
+function resolveShot(rel) {
+  if (typeof rel !== 'string') return null;
+  const parts = rel.split('/');
+  if (parts.length !== 3) return null;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(parts[0])) return null;
+  if (!/^[א-תa-zA-Z0-9_\- ]+$/.test(parts[1]) || !/^[א-תa-zA-Z0-9_\- .]+\.jpg$/i.test(parts[2])) return null;
+  if (parts[2].includes('..')) return null;
+  const full = path.join(SHOTS_ROOT, parts[0], parts[1], parts[2]);
+  return isInside(SHOTS_ROOT, full) ? full : null;
+}
+
+// מחיקת תיקיות תאריך ישנות (רק אם הוגדר screenshotRetentionDays ב-config.json)
+function pruneOldScreenshots() {
+  if (!RETENTION_DAYS || !fs.existsSync(SHOTS_ROOT)) return;
+  const cutoff = Date.now() - RETENTION_DAYS * 86400000;
+  fs.readdirSync(SHOTS_ROOT).forEach(d => {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return;           // רק תיקיות בפורמט תאריך
+    const t = Date.parse(d + 'T00:00:00');
+    if (t && t < cutoff) {
+      try { fs.rmSync(path.join(SHOTS_ROOT, d), { recursive: true, force: true }); console.log(`🧹 נמחקו צילומים ישנים: ${d}`); } catch {}
+    }
+  });
+}
+try { pruneOldScreenshots(); } catch {}
+
+// ראיות מהאפליקציה/דף התלמיד (לכל שם תלמיד): הגבלת קצב וכמות
+const EVIDENCE_KINDS = new Set(['tab-hidden','second-screen','paste','lock-escape','ai-clip-question','ai-clip-text','ai-clip-image','ai-ai-window','ai-snip-tool','ai-printscreen','ai-off-list-nav']);
+const AUTO_SHOT_CAP = 800;      // צילומים אוטומטיים לתלמיד
+const EVIDENCE_CAP  = 150;      // צילומי ראיה לתלמיד
+const shotStats = {};           // nameKey -> { auto, evidence, lastEvidence:{kind:ts} }
+function statsFor(name) { return shotStats[nameKey(name)] || (shotStats[nameKey(name)] = { auto: 0, evidence: 0, lastEvidence: {} }); }
 
 function handleRequest(req, res) {
   res.setHeader('X-Content-Type-Options', 'nosniff');
@@ -368,11 +453,26 @@ function handleRequest(req, res) {
     if (!st || !req.headers['x-student-token'] || !safeEqual(req.headers['x-student-token'], st.token)) {
       res.writeHead(403); res.end(); return;
     }
-    if (!screenshotsEnabled) { res.writeHead(204); res.end(); return; }
+    const evKind = String(req.headers['x-evidence-kind'] || '');
+    const isEvidence = !!evKind;
+    if (isEvidence && !EVIDENCE_KINDS.has(evKind)) { res.writeHead(400); res.end(); return; }
+    // צילום אוטומטי רק כשהמורה הפעיל; צילום ראיה (בעקבות דגל) תמיד
+    if (!isEvidence && !screenshotsEnabled) { res.writeHead(204); res.end(); return; }
+    const stats = statsFor(st.name);
+    if (isEvidence) {
+      const last = stats.lastEvidence[evKind] || 0;
+      if (stats.evidence >= EVIDENCE_CAP || Date.now() - last < 1500) { res.writeHead(204); res.end(); return; }
+      stats.lastEvidence[evKind] = Date.now();
+    } else if (stats.auto >= AUTO_SHOT_CAP) { res.writeHead(204); res.end(); return; }
     readBody(req, res, 6 * 1024 * 1024, buf => {
       try {
         if (buf.length < 4 || buf[0] !== 0xFF || buf[1] !== 0xD8) { res.writeHead(400); res.end(); return; }   // חייב להיות JPEG
-        if (!saveShot(st.name, buf, 'auto', 'unknown')) { res.writeHead(400); res.end(); return; }
+        const rel = saveShot(st.name, buf, isEvidence ? 'flag-' + evKind : 'auto', 'unknown');
+        if (!rel) { res.writeHead(400); res.end(); return; }
+        if (isEvidence) {
+          stats.evidence++;
+          attachEvidence(st.name, evKind, rel);
+        } else stats.auto++;
         res.writeHead(200); res.end('ok');
       } catch { res.writeHead(500); res.end(); }
     });
@@ -390,6 +490,67 @@ function handleRequest(req, res) {
         if (!saveShot(studentName, img, 'manual', 'manual')) { res.writeHead(400); res.end(); return; }
         res.writeHead(200); res.end('ok');
       } catch { res.writeHead(500); res.end(); }
+    });
+    return;
+  }
+
+  // צפייה בצילום (מורה בלבד)
+  if (pathname === '/shot') {
+    if (!validSession(req.headers.cookie)) { res.writeHead(403); res.end(); return; }
+    let rel = '';
+    try { rel = new URL(req.url, 'https://x').searchParams.get('p') || ''; } catch {}
+    const full = resolveShot(rel);
+    if (!full) { res.writeHead(404); res.end(); return; }
+    fs.readFile(full, (err, data) => {
+      if (err) { res.writeHead(404); res.end(); return; }
+      res.writeHead(200, { 'Content-Type': 'image/jpeg', 'Cache-Control': 'private, max-age=3600' });
+      res.end(data);
+    });
+    return;
+  }
+
+  // נתוני סקירה למורה: לכל תלמיד ציון חשד, ספירת אירועים וציר זמן עם ראיות
+  if (pathname === '/review-data') {
+    if (!validSession(req.headers.cookie)) { res.writeHead(403); res.end(); return; }
+    const rows = Object.values(persistentStudents).map(p => {
+      const live = Object.values(students).find(x => x.name === p.name);
+      const sus = suspicionOf(p, live ? !!live.usingApp : undefined);
+      return {
+        name: p.name, ip: p.ip, online: isLive(live), usingApp: live ? !!live.usingApp : null,
+        score: sus.score, level: sus.level, counts: sus.counts,
+        autoShots: (shotStats[nameKey(p.name)] || {}).auto || 0,
+        events: (p.events || []).slice(-200),
+      };
+    }).sort((a, b) => b.score - a.score);
+    res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+    res.end(JSON.stringify({ students: rows, now: new Date().toISOString() }));
+    return;
+  }
+
+  // התראה מהסורק החיצוני (scanner.py --watch)
+  if (pathname === '/scan-alert' && req.method === 'POST') {
+    readBody(req, res, 20 * 1024, buf => {
+      try {
+        const m = JSON.parse(buf.toString('utf8'));
+        if (typeof m.key !== 'string' || !safeEqual(m.key, SCANNER_KEY)) { res.writeHead(403); res.end(); return; }
+        const p = persistentStudents[normalizeName(m.student)] ||
+          Object.values(persistentStudents).find(x => nameKey(x.name) === nameKey(m.student));
+        if (!p) { res.writeHead(404); res.end(); return; }
+        const ai = (Array.isArray(m.ai) ? m.ai : []).map(x => clip(String(x), 80)).slice(0, 5);
+        const blocked = (Array.isArray(m.blocked) ? m.blocked : []).map(x => clip(String(x), 80)).slice(0, 5);
+        const shots = resolveShot(m.file) ? [m.file] : undefined;
+        if (ai.length) {
+          const text = `🔎 הסורק זיהה אתר/כלי AI אצל ${p.name}: ${ai.join(', ')}`;
+          addLog('warning', text);
+          recordStudentEvent(p.name, `הסורק זיהה אתר AI: ${ai.join(', ')}`, 'scan-ai', { shots });
+          const live = Object.values(students).find(x => x.name === p.name);
+          if (live) sendToAdmin({ type: 'flag', id: live.id, kind: 'scan-ai', message: text });
+        } else if (blocked.length) {
+          addLog('info', `🔎 הסורק: ${p.name} באתר שלא ברשימה: ${blocked.join(', ')}`);
+          recordStudentEvent(p.name, `הסורק: אתר לא ברשימה: ${blocked.join(', ')}`, 'scan-offlist', { shots });
+        }
+        res.writeHead(200); res.end('ok');
+      } catch { res.writeHead(400); res.end(); }
     });
     return;
   }
@@ -578,6 +739,22 @@ function findStudentByName(name) {
 function clip(v, n) { return typeof v === 'string' ? v.slice(0, n) : ''; }
 function validHttpUrl(u) { return typeof u === 'string' && u.length < 2000 && /^https?:\/\/[^\s]+$/i.test(u); }
 
+// מצרף צילום ראיה לאירוע האחרון מאותו סוג (עד 15 שניות אחורה); אם אין - יוצר אירוע חדש
+function attachEvidence(name, kind, rel) {
+  const p = persistentStudents[name];
+  if (!p) return;
+  const now = Date.now();
+  for (let i = p.events.length - 1; i >= 0 && i >= p.events.length - 8; i--) {
+    const e = p.events[i];
+    if (e.kind === kind && now - Date.parse(e.time) < 15000 && (!e.shots || e.shots.length < 3)) {
+      e.shots = (e.shots || []).concat(rel);
+      scheduleSave();
+      return;
+    }
+  }
+  recordStudentEvent(name, 'צילום ראיה', kind, { shots: [rel] });
+}
+
 // ── איתות WebRTC ──────────────────────────────────────────────
 function handleSignal(ws, msg) {
   if (!['offer', 'answer', 'ice'].includes(msg.type)) return false;
@@ -710,7 +887,7 @@ function handleStudentJoin(ws, msg, ip) {
     ws.send(JSON.stringify({ type: 'joined', id: existing.id, name: existing.name, token: existing.token }));
     addLog('reconnect', `${existing.name} התחבר מחדש (${ip})${usingApp ? ' 🛡️ באפליקציה' : ' 🌐 בדפדפן'}`);
     recordStudent({ name: existing.name, ip });
-    recordStudentEvent(existing.name, 'התחבר מחדש');
+    recordStudentEvent(existing.name, 'התחבר מחדש', 'reconnect');
     sendToAdmin({ type: 'reconnect', student: { id: existing.id, name: existing.name, ip, connectedAt: existing.connectedAt, resolution: existing.resolution, lastSeen: existing.lastSeen, usingApp, online: true } });
     applyExamStateTo(existing);   // מחיל מצב מבחן נוכחי (אתר/קישורים/טיימר/נעילה)
   } else {
@@ -721,7 +898,7 @@ function handleStudentJoin(ws, msg, ip) {
     ws.send(JSON.stringify({ type: 'joined', id, name, token }));
     addLog(usingApp ? 'join' : 'warning', `${name} התחבר (${ip})${usingApp ? ' 🛡️ באפליקציה' : ' 🌐 בדפדפן בלבד - לא באפליקציה!'}`);
     recordStudent({ name, ip, resolution: null });
-    recordStudentEvent(name, 'התחבר');
+    recordStudentEvent(name, 'התחבר', 'join');
     sendToAdmin({ type: 'student-join', student: getStudentList().find(s => s.id === id) });
     const connected = Object.values(students).filter(isLive).length;
     if (expectedCount > 0 && connected > expectedCount) {
@@ -802,7 +979,7 @@ function handleMessage(ws, msg, ip, req) {
       delete students[id];
       sendToAdmin({ type: 'student-remove', id });
       addLog('warning', `🚫 ${s.name} הועף מהמערכת (חסום ל-${KICK_BLOCK_MS/60000} דק')`);
-      recordStudentEvent(s.name, 'הועף מהמערכת');
+      recordStudentEvent(s.name, 'הועף מהמערכת', 'kick');
     }
     return;
   }
@@ -822,7 +999,7 @@ function handleMessage(ws, msg, ip, req) {
   if (msg.type === 'stop-share') {
     if (ws._studentId && students[ws._studentId]) {
       sendToAdmin({ type: 'stop-share', id: ws._studentId });
-      recordStudentEvent(students[ws._studentId].name, 'הפסיק לשתף מסך');
+      recordStudentEvent(students[ws._studentId].name, 'הפסיק לשתף מסך', 'stop-share');
     }
     return;
   }
@@ -849,10 +1026,10 @@ function handleMessage(ws, msg, ip, req) {
       }
       if (msg.mode === 'camera') {
         addLog('info', `📷 ${sname} משתף ממצלמת טלפון`);
-        recordStudentEvent(sname, 'שיתוף ממצלמת טלפון');
+        recordStudentEvent(sname, 'שיתוף ממצלמת טלפון', 'camera');
       } else if (surfaceType && surfaceType !== 'monitor') {
         addLog('warning', `⚠️ ${sname} משתף רק חלק מהמסך (סוג: ${surfaceType})`);
-        recordStudentEvent(sname, `שיתוף חלקי - סוג: ${surfaceType}`);
+        recordStudentEvent(sname, `שיתוף חלקי - סוג: ${surfaceType}`, 'partial-share');
         sendToAdmin({ type: 'alert', message: `${sname} משתף חלון או כרטיסיה בלבד!` });
       }
     }
@@ -892,7 +1069,7 @@ function handleMessage(ws, msg, ip, req) {
     if (!text) return;
     const isWarn = msg.kind !== 'tab-visible';
     addLog(isWarn ? 'warning' : 'info', text);
-    recordStudentEvent(sname, text.replace(/^[^ ]+ /, ''));
+    recordStudentEvent(sname, text.replace(/^[^ ]+ /, ''), msg.kind);
     if (isWarn) sendToAdmin({ type: 'flag', id, kind: msg.kind, message: text });
     return;
   }
@@ -926,7 +1103,7 @@ wss.on('connection', (ws, req) => {
       const name = students[id].name;
       students[id].ws = null;
       addLog('disconnect', `${name} התנתק`);
-      recordStudentEvent(name, 'התנתק');
+      recordStudentEvent(name, 'התנתק', 'disconnect');
       sendToAdmin({ type: 'student-leave', id });
       const connected = Object.values(students).filter(isLive).length;
       if (expectedCount > 0 && connected < expectedCount)
@@ -986,6 +1163,7 @@ server.listen(PORT, () => {
   } else {
     console.log(`\n🔐 סיסמת מורה: ב-config.json`);
   }
+  console.log(`\n🔎 סקירת חשד: כפתור "סקירה" בדף המורה. סורק חי: python scanner.py --watch --server https://localhost:${PORT} --key ${SCANNER_KEY}`);
   console.log(`\n👨‍🎓 לתלמידים:   https://<IP שלך>:${PORT}/student.html`);
   console.log(`\nCtrl+C לעצירה\n`);
 });
