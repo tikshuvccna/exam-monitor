@@ -22,6 +22,10 @@ agent is what makes those possible. See `../ANALYSIS.md` §6 for the full ration
 cd agent
 npm install
 npm run build      # → agent/dist/Exam Client Setup x.y.z.exe
+                   # On Windows without admin rights / Developer Mode, the code-signing tool fails with
+                   # "Cannot create symbolic link". Build without signing instead:
+                   #   set CSC_IDENTITY_AUTO_DISCOVERY=false
+                   #   npx electron-builder --win nsis -c.win.signAndEditExecutable=false
 ```
 The server's `/download-agent` route auto-serves whatever `.exe` lands in `agent/dist/`.
 

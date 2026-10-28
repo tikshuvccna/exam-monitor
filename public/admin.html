@@ -114,7 +114,8 @@
   .student-row-meta { font-family:'IBM Plex Mono',monospace; font-size:10px; color:var(--text2); }
 
   .export-btn { margin:8px; }
-  .empty-state { text-align:center; color:var(--text2); font-size:12px; padding:40px 16px; font-family:'IBM Plex Mono',monospace; }
+  .empty-state { text-align:center; color:var(--text2); font-size:16px; line-height:2.1; padding:40px 16px; }
+  .empty-state b { color:var(--text); font-family:'IBM Plex Mono',monospace; font-size:17px; user-select:all; }
 </style>
 </head>
 <body class="enable-hover-zoom">
@@ -135,40 +136,43 @@
     
     <label style="font-size:12px;color:var(--text2); margin-right: 10px;">צפויים:</label>
     <input type="number" id="expectedInput" min="1" max="200" placeholder="כמה?">
-    <button onclick="setExpected()">קבע</button>
-    <button class="secondary" onclick="startTimer()">⏱ שעון</button>
+    <button onclick="setExpected()" title="כמה תלמידים אמורים להתחבר. אם יתחברו פחות או יותר תקבל התראה">קבע</button>
+    <button class="secondary" onclick="startTimer()" title="שעון ריצה למורה (לא מוצג לתלמידים). לחיצה נוספת מאפסת. לספירה לאחור לתלמידים השתמש ב-⏳">⏱ שעון</button>
     
-    <button class="secondary" id="autoShotBtn" onclick="toggleAutoScreenshots()">📸 התחל צילום אוטומטי</button>
+    <button class="secondary" id="autoShotBtn" onclick="toggleAutoScreenshots()" title="שומר צילום מסך של כל תלמיד כל 15 שניות (רק כשהמסך משתנה). צילומי ראיה בעת חשד נשמרים גם כשהכפתור כבוי">📸 התחל צילום אוטומטי</button>
     
-    <button class="secondary" onclick="exportReport()">⬇ CSV</button>
-    <button class="secondary" onclick="downloadFullReport()">⬇ דוח מלא</button>
-    <button class="secondary" onclick="downloadFullLog()">⬇ לוג TXT</button>
-    <button class="secondary rec-btn" id="recBtn" onclick="toggleRecording()">⏺ הקלט מסך ניהול</button>
+    <button class="secondary" onclick="exportReport()" title="רשימה קצרה של התלמידים כרגע, עם סטטוס מחובר או מנותק">⬇ CSV</button>
+    <button class="secondary" onclick="downloadFullReport()" title="דוח מלא לכל תלמיד: כניסות, ניתוקים, אירועים, ציון חשד וצילומי ראיה">⬇ דוח מלא</button>
+    <button class="secondary" onclick="downloadFullLog()" title="יומן כל האירועים של המבחן כקובץ טקסט">⬇ לוג TXT</button>
+    <button class="secondary rec-btn" id="recBtn" onclick="toggleRecording()" title="מקליט וידאו של דף הניהול הזה (לא של התלמידים) ושומר אותו כקובץ">⏺ הקלט מסך ניהול</button>
     <span class="screenshots-indicator" id="screenshotsIndicator">📸 צילומים פעילים</span>
   </div>
 </header>
 
 <!-- סרגל שליטה -->
 <div style="background:var(--surface2);border-bottom:1px solid var(--border);padding:6px 16px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12px;">
+  <button class="secondary" onclick="openHelp()" title="הוראות שימוש מלאות" style="border-color:rgba(0,212,170,0.6);color:#5eead4;">❓ עזרה</button>
+  <button class="secondary" onclick="copyStudentLink()" title="מעתיק את הכתובת שהתלמידים צריכים לפתוח. שלח להם אותה">📋 קישור לתלמידים</button>
+  <span style="width:1px;height:18px;background:var(--border);"></span>
   <span style="color:var(--text2);font-family:'IBM Plex Mono',monospace;">שליטה:</span>
   <label class="checkbox-label"><input type="checkbox" id="selectAll" onchange="toggleSelectAll()"> בחר הכל</label>
-  <span id="selCount" style="color:var(--text2);">0 נבחרו</span>
+  <span id="selCount" style="color:var(--text2);">לא נבחר - חל על כולם</span>
   <span style="width:1px;height:18px;background:var(--border);"></span>
-  <button id="broadcastBtn" onclick="toggleBroadcast()">📡 שתף מסך לכולם</button>
-  <button class="secondary" onclick="sendMessage()">✉️ הודעה</button>
-  <button class="secondary" onclick="broadcastCountdown()">⏳ שדר ספירה</button>
-  <button class="secondary" onclick="setExamUrl()">🌐 הטמע אתר מבחן</button>
-  <button class="secondary" onclick="manageLinks()">🔗 קישורים מאושרים</button>
-  <button class="secondary" onclick="control('screen-lock', true)">🔒 נעל</button>
-  <button class="secondary" onclick="control('screen-lock', false)">🔓 שחרר</button>
-  <button class="secondary" onclick="control('input-block', true)">⌨️ חסום קלט</button>
-  <button class="secondary" onclick="control('input-block', false)">⌨️ שחרר קלט</button>
-  <button class="secondary" onclick="control('agent-launch')">🚀 הפעל אפליקציה</button>
-  <button class="secondary" onclick="unkickStudent()">↩️ בטל חסימה</button>
-  <button class="secondary" onclick="endExam()" style="border-color:rgba(239,68,68,0.5);color:#fca5a5;">🏁 סיים מבחן</button>
-  <button class="secondary" onclick="openReview()" style="border-color:rgba(245,158,11,0.6);color:#fcd34d;">🔍 סקירה</button>
-  <button class="secondary" onclick="location.href='/admin-logout'">🚪 יציאה</button>
-  <span style="color:var(--text2);font-size:11px;">(פעולות חלות על הנבחרים, או על כולם אם אין בחירה)</span>
+  <button id="broadcastBtn" onclick="toggleBroadcast()" title="מציג את המסך שלך לכל התלמידים בתצוגה מלאה (למשל להסבר). לחיצה נוספת עוצרת">📡 שתף מסך לכולם</button>
+  <button class="secondary" onclick="sendMessage()" title="שולח הודעה טקסט שמופיעה אצל התלמידים ל-15 שניות">✉️ הודעה</button>
+  <button class="secondary" onclick="broadcastCountdown()" title="מפעיל ספירה לאחור שמוצגת לכל התלמידים. תלמיד שמצטרף מאוחר רואה את הזמן שנותר">⏳ שדר ספירה</button>
+  <button class="secondary" onclick="setExamUrl()" title="פותח את אתר המבחן (למשל קישור לטופס) אצל כל התלמידים">🌐 הטמע אתר מבחן</button>
+  <button class="secondary" onclick="manageLinks()" title="רשימת קישורים שהתלמיד יכול לבחור מהם. ניווט לאתר שלא ברשימה מדווח לך">🔗 קישורים מאושרים</button>
+  <button class="secondary" onclick="control('screen-lock', true)" title="מכסה את המסך של התלמידים במסך נעילה עד ששחררת">🔒 נעל</button>
+  <button class="secondary" onclick="control('screen-lock', false)" title="משחרר את מסך הנעילה">🔓 שחרר</button>
+  <button class="secondary" onclick="control('input-block', true)" title="חוסם מקלדת ועכבר אצל התלמידים (המסך נשאר גלוי)">⌨️ חסום קלט</button>
+  <button class="secondary" onclick="control('input-block', false)" title="מחזיר את המקלדת והעכבר">⌨️ שחרר קלט</button>
+  <button class="secondary" onclick="control('agent-launch')" title="מבקש מהתלמידים לפתוח את אפליקציית המבחן (מופיע להם כפתור גדול)">🚀 הפעל אפליקציה</button>
+  <button class="secondary" onclick="unkickStudent()" title="תלמיד שהעפת חסום 2 דקות. כאן אפשר להחזיר אותו מיד">↩️ בטל חסימה</button>
+  <button class="secondary" onclick="endExam()" title="מסיים את המבחן: עוצר שיתוף, משחרר את כולם וסוגר את האפליקציה אצלם" style="border-color:rgba(239,68,68,0.5);color:#fca5a5;">🏁 סיים מבחן</button>
+  <button class="secondary" onclick="openReview()" title="רשימת תלמידים לפי ציון חשד, עם ציר זמן וצילומי ראיה" style="border-color:rgba(245,158,11,0.6);color:#fcd34d;">🔍 סקירה</button>
+  <button class="secondary" onclick="location.href='/admin-logout'" title="יציאה מדף המורה">🚪 יציאה</button>
+  <span id="targetHint" style="color:var(--text2);font-size:11px;">(הפעולות חלות על כל התלמידים. כדי לפעול על תלמידים מסוימים - סמן אותם בכרטיסים)</span>
 </div>
 
 <div id="alertBanner" class="alert-banner"></div>
@@ -177,7 +181,7 @@
   <div class="grid-area">
     <div class="grid-label">מסכי תלמידים</div>
     <div class="video-grid" id="videoGrid">
-      <div class="empty-state">ממתין לחיבור תלמידים...</div>
+      <div class="empty-state" id="emptyState">ממתין לחיבור תלמידים...</div>
     </div>
   </div>
 
@@ -233,6 +237,87 @@
     מעל 15 = גבוה, מעל 6 = בינוני. תלמיד בדפדפן בלבד מקבל +5 כי אי אפשר לגלות אצלו כלי AI בזמן אמת. הציון הוא כיוון לבדיקה, לא הוכחה.
   </div>
   <div id="rvList"></div>
+</div>
+<style>
+  #helpModal{display:none;position:fixed;inset:0;z-index:5500;background:rgba(2,6,23,.97);overflow:auto;padding:20px 28px;color:#e2e8f0;line-height:1.75;font-size:14px;}
+  #helpModal .hp-wrap{max-width:900px;margin:0 auto;}
+  #helpModal h2{margin:0 0 4px;font-size:22px;} #helpModal h3{margin:22px 0 6px;font-size:16px;color:#5eead4;border-bottom:1px solid #1e293b;padding-bottom:4px;}
+  #helpModal ol,#helpModal ul{margin:6px 0;padding-inline-start:22px;} #helpModal li{margin:3px 0;}
+  #helpModal .hp-top{display:flex;align-items:center;gap:12px;margin-bottom:10px;}
+  #helpModal .hp-btn{background:#1e293b;border:1px solid #334155;color:#e2e8f0;border-radius:8px;padding:6px 14px;cursor:pointer;font-family:inherit;}
+  #helpModal .hp-link{background:#0f172a;border:1px solid #334155;border-radius:8px;padding:8px 12px;font-family:monospace;direction:ltr;text-align:left;word-break:break-all;}
+  #helpModal .hp-note{background:rgba(245,158,11,.1);border:1px solid rgba(245,158,11,.35);border-radius:8px;padding:8px 12px;margin:8px 0;color:#fde68a;}
+  #helpModal table{border-collapse:collapse;width:100%;margin:6px 0;} #helpModal td{border-bottom:1px solid #1e293b;padding:5px 8px;vertical-align:top;} #helpModal td:first-child{white-space:nowrap;color:#e2e8f0;font-weight:600;width:1%;}
+  #toast{position:fixed;bottom:22px;left:50%;transform:translateX(-50%);background:#0f172a;border:1px solid #00d4aa;color:#e2e8f0;padding:10px 20px;border-radius:10px;z-index:7000;display:none;box-shadow:0 6px 30px rgba(0,0,0,.5);font-size:14px;}
+</style>
+<div id="toast"></div>
+<div id="helpModal">
+ <div class="hp-wrap">
+  <div class="hp-top"><h2>❓ איך משתמשים במערכת</h2><button class="hp-btn" style="margin-inline-start:auto;" onclick="closeHelp()">✕ סגור (Esc)</button></div>
+
+  <h3>🚀 לפני המבחן - 4 צעדים</h3>
+  <ol>
+    <li><b>ודא שהתלמידים באותה רשת</b> (אותו Wi-Fi או כבל) כמו המחשב הזה.</li>
+    <li><b>שלח להם את הקישור</b> - כפתור "📋 קישור לתלמידים" מעתיק אותו. כך הוא נראה:
+      <div class="hp-link" id="helpLink">טוען...</div></li>
+    <li>כל תלמיד פותח את הקישור, <b>כותב שם ומשפחה</b> ולוחץ <b>"שתף את המסך המלא"</b> ובוחר "כל המסך". (בטלפון הוא משתף מצלמה.)<br>
+      מומלץ שכולם ישתמשו ב<b>אפליקציית המבחן</b> (כפתור הורדה בדף התלמיד, או "🚀 הפעל אפליקציה" אצלך). רק איתה מזוהים כלי AI והעתקות. תלמיד שמסומן 🌐⚠️ הוא בדפדפן בלבד.</li>
+    <li>קבע כמה תלמידים צפויים (שדה "צפויים" למעלה). אם יחסר מישהו תקבל התראה.</li>
+  </ol>
+  <div class="hp-note">בפעם הראשונה הדפדפן יציג "החיבור אינו פרטי". זה תקין (תעודה עצמית): לחץ "מתקדם" ואז "המשך".</div>
+
+  <h3>▶️ במהלך המבחן</h3>
+  <ol>
+    <li><b>פתח את אתר המבחן אצל כולם:</b> "🌐 הטמע אתר מבחן" והדבק את הקישור. או "🔗 קישורים מאושרים" אם יש כמה חלקים.</li>
+    <li><b>הפעל זמן:</b> "⏳ שדר ספירה" - הטיימר מופיע אצל התלמידים (גם אצל מי שמצטרף באיחור).</li>
+    <li><b>עקוב:</b> כל כרטיס הוא מסך של תלמיד בשידור חי. בצד: "לוג" (כל מה שקורה) ו"תלמידים" (רשימה). חשד חדש מקפיץ התראה אדומה וצליל.</li>
+    <li><b>צילומים:</b> "📸 התחל צילום אוטומטי" שומר צילומים לאורך המבחן. בכל חשד נשמר גם צילום ראיה אוטומטית.</li>
+    <li><b>בעיה בכיתה?</b> "🔒 נעל" מכסה את המסכים, "⌨️ חסום קלט" חוסם מקלדת ועכבר, "✉️ הודעה" שולחת הודעה, "📡 שתף מסך לכולם" מציג להם את המסך שלך.</li>
+  </ol>
+
+  <h3>🏁 בסיום</h3>
+  <ol>
+    <li>לחץ <b>"🏁 סיים מבחן"</b>: משחרר את כולם וסוגר את האפליקציה אצלם.</li>
+    <li>לחץ <b>"🔍 סקירה"</b> ובדוק את התלמידים לפי ציון חשד (ראה למטה).</li>
+    <li>הורד <b>"⬇ דוח מלא"</b> ו"⬇ לוג TXT" לשמירה. הם נשמרים גם בתיקיית logs.</li>
+  </ol>
+
+  <h3>👆 על מי הפעולה חלה?</h3>
+  <ul>
+    <li><b>אם לא סימנת אף כרטיס</b> - על כל התלמידים. (הטקסט ליד "בחר הכל" אומר מי נבחר.)</li>
+    <li><b>אם סימנת ✓ בכרטיסים</b> - רק עליהם. לנעילה/הודעה/חסימת קלט בלבד.</li>
+    <li>הטמעת אתר, קישורים וספירה מיועדים לכולם.</li>
+  </ul>
+
+  <h3>🔍 איך מוצאים מעתיקים ושימוש ב-AI</h3>
+  <ul>
+    <li>לחץ <b>"🔍 סקירה"</b>. התלמידים מסודרים מהחשוד ביותר. <b>אדום</b> (15 ומעלה) = בדוק קודם. <b>כתום</b> (6-14) = שווה מבט. <b>ירוק</b> = שקט.</li>
+    <li>לחץ על שורה כדי לראות מה קרה ומתי, ו<b>צילומי ראיה</b> (לחיצה על תמונה מגדילה). <b>תמיד הסתכל בתמונה לפני שמחליטים</b> - הציון הוא רמז, לא הוכחה.</li>
+    <li>החשוד ביותר: "כלי AI פתוח", "העתקת שאלת מבחן", "יציאה ממסך נעול". פחות חמור: מעבר לשונית, הדבקה.</li>
+    <li>תלמיד בדפדפן בלבד (🌐⚠️) מקבל +5 כי אי אפשר לראות אצלו כלי AI בזמן אמת.</li>
+    <li>מה שאין דרך לזהות: טלפון או מכשיר נוסף, ומישהו שעוזר מהצד. נשארים שאלות מגוונות, שיחה עם נחשדים וסיבוב בין השולחנות.</li>
+  </ul>
+
+  <h3>🧩 מה אומרים הסימנים בכרטיס</h3>
+  <table>
+    <tr><td>נקודה ירוקה / אפורה</td><td>מחובר / מנותק</td></tr>
+    <tr><td>🛡️ / 🌐⚠️</td><td>באפליקציית המבחן (מפוקח) / בדפדפן בלבד (אין זיהוי AI)</td></tr>
+    <tr><td>📷</td><td>משתף מצלמת טלפון ולא מסך</td></tr>
+    <tr><td>👁 &nbsp;📋 &nbsp;🖥️🖥️ &nbsp;🚪</td><td>עזב לשונית &nbsp;|&nbsp; הדביק או העתיק &nbsp;|&nbsp; יש לו מסך שני &nbsp;|&nbsp; יצא ממסך נעול</td></tr>
+    <tr><td>📸 (בכרטיס)</td><td>צילום ידני של התלמיד הזה</td></tr>
+    <tr><td>⧉</td><td>פתיחת המסך שלו בחלון נפרד</td></tr>
+    <tr><td>✕</td><td>הרחקת תלמיד. הוא חסום 2 דקות. אפשר להחזיר אותו עם "↩️ בטל חסימה"</td></tr>
+  </table>
+
+  <h3>🛠️ בעיות נפוצות</h3>
+  <ul>
+    <li><b>תלמיד לא מצליח להיכנס:</b> בדוק שהוא באותה רשת, שהקישור נכון (כולל המספר 4555), ושחומת האש של Windows במחשב הזה אושרה (בהפעלה הראשונה של start-server.bat לחצת "כן"?).</li>
+    <li><b>"השם הזה כבר מחובר":</b> אותו שם כבר מחובר. אם זה התלמיד אחרי ניתוק - שימתין חצי דקה ויכנס שוב. הכניסה מחדש ממשיכה את המבחן בלי לאבד כלום.</li>
+    <li><b>תלמיד התנתק באמצע:</b> שיכנס שוב עם אותו שם. הנעילה, הטיימר ואתר המבחן חוזרים אליו אוטומטית.</li>
+    <li><b>שכחת את הסיסמה:</b> היא בקובץ config.json בתיקיית השרת (שדה adminPassword).</li>
+    <li><b>אין שידור מסך של תלמיד:</b> הוא עוד לא לחץ "שתף", או שהפסיק לשתף (תקבל התראה).</li>
+  </ul>
+ </div>
 </div>
 <div id="rvLightbox" onclick="this.style.display='none'"><img id="rvLightboxImg" alt=""></div>
 
@@ -649,8 +734,9 @@ function showAlert(msg) {
 
 function setExpected() {
   const val = parseInt(document.getElementById('expectedInput').value);
-  if (!val || val < 1) return;
+  if (!val || val < 1) { toast('כתוב כמה תלמידים צפויים (מספר גדול מ-0)'); return; }
   ws.send(JSON.stringify({ type: 'set-expected', count: val }));
+  toast(`נקבע: ${val} תלמידים צפויים`);
 }
 
 function showTab(name) {
@@ -717,7 +803,9 @@ function selectedTargets() {
 }
 function updateSelCount() {
   const n = document.querySelectorAll('.sel-box:checked').length;
-  document.getElementById('selCount').textContent = n ? `${n} נבחרו` : '0 נבחרו';
+  document.getElementById('selCount').textContent = n ? `${n} נבחרו` : 'לא נבחר - חל על כולם';
+  const hint = document.getElementById('targetHint');
+  if (hint) hint.textContent = n ? `(הפעולות חלות רק על ${n} התלמידים שסימנת)` : '(הפעולות חלות על כל התלמידים. כדי לפעול על תלמידים מסוימים - סמן אותם בכרטיסים)';
 }
 function toggleSelectAll() {
   const on = document.getElementById('selectAll').checked;
@@ -731,12 +819,19 @@ function control(action, on) {
   const payload = { type:'control', action, target };
   if (typeof on === 'boolean') payload.on = on;
   ws.send(JSON.stringify(payload));
+  const done = {
+    'screen-lock': on ? '🔒 מסך הנעילה הוצג' : '🔓 מסך הנעילה שוחרר',
+    'input-block': on ? '⌨️ המקלדת והעכבר נחסמו' : '⌨️ המקלדת והעכבר שוחררו',
+    'agent-launch': '🚀 נשלחה בקשה לפתוח את האפליקציה',
+  }[action];
+  if (done) toast(`${done} ${targetWords()}`);
 }
 
 function sendMessage() {
   const text = prompt('הודעה לתלמידים הנבחרים (או לכולם):');
   if (!text) return;
   ws.send(JSON.stringify({ type:'control', action:'message', target:selectedTargets(), message:text }));
+  toast(`✉️ ההודעה נשלחה ${targetWords()}`);
 }
 
 function endExam() {
@@ -748,7 +843,9 @@ function endExam() {
 function setExamUrl() {
   const url = prompt('הדבק את כתובת אתר המבחן (למשל קישור לטופס):', 'https://');
   if (!url || url === 'https://') return;
+  if (!/^https?:\/\//i.test(url)) { alert('הכתובת חייבת להתחיל ב-https:// או http://'); return; }
   ws.send(JSON.stringify({ type:'control', action:'exam-url', target:'all', url }));
+  toast('🌐 אתר המבחן נשלח לכל התלמידים');
 }
 
 // רשימת קישורים מאושרים - התלמיד לוחץ ופותח בחלון המבחן
@@ -771,9 +868,10 @@ function manageLinks() {
 }
 
 function broadcastCountdown() {
-  const mins = parseInt(prompt('כמה דקות לספירה לאחור?', '30'));
+  const mins = parseInt(prompt('כמה דקות לספירה לאחור? (תופיע אצל כל התלמידים)', '30'));
   if (!mins || mins < 1) return;
   ws.send(JSON.stringify({ type:'control', action:'countdown', target:'all', on:true, durationMs: mins*60*1000 }));
+  toast(`⏳ ספירה של ${mins} דקות התחילה אצל כל התלמידים`);
 }
 
 // סימון דגל חשד על כרטיס התלמיד
@@ -828,6 +926,50 @@ async function startBroadcastTo(id) {
   await pc.setLocalDescription(offer);
   ws.send(JSON.stringify({ type:'offer', subtype:'broadcast', target:id, offer }));
 }
+
+// ════════ עזרה, הודעות קצרות וקישור לתלמידים ════════
+let studentUrls = [];
+fetch('/server-info', { cache: 'no-store' }).then(r => r.json()).then(info => {
+  studentUrls = info.studentUrls || [];
+  const link = studentUrls[0] || `https://${location.host}/student.html`;
+  const hl = document.getElementById('helpLink'); if (hl) hl.textContent = link + (studentUrls.length > 1 ? '   (או: ' + studentUrls.slice(1).join(' , ') + ')' : '');
+  renderEmptyState();
+}).catch(() => {});
+
+function renderEmptyState() {
+  const box = document.getElementById('emptyState');
+  if (!box) return;
+  const link = studentUrls[0] || `https://${location.host}/student.html`;
+  box.textContent = '';
+  box.appendChild(document.createTextNode('ממתין לחיבור תלמידים...'));
+  box.appendChild(document.createElement('br'));
+  box.appendChild(document.createTextNode('שלח להם את הקישור: '));
+  const b = document.createElement('b'); b.textContent = link; b.style.direction = 'ltr'; b.style.display = 'inline-block';
+  box.appendChild(b);
+  box.appendChild(document.createElement('br'));
+  box.appendChild(document.createTextNode('(לחץ "❓ עזרה" להוראות מלאות)'));
+}
+
+let _toastTimer = null;
+function toast(text) {
+  const t = document.getElementById('toast');
+  t.textContent = text; t.style.display = 'block';
+  clearTimeout(_toastTimer);
+  _toastTimer = setTimeout(() => { t.style.display = 'none'; }, 3500);
+}
+function targetWords() {
+  const t = selectedTargets();
+  return t === 'all' ? 'לכל התלמידים' : `ל-${t.length} תלמידים נבחרים`;
+}
+function copyStudentLink() {
+  const link = studentUrls[0] || `https://${location.host}/student.html`;
+  const done = () => toast('הקישור הועתק: ' + link);
+  if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(link).then(done, () => prompt('העתק את הקישור:', link));
+  else prompt('העתק את הקישור:', link);
+}
+function openHelp() { document.getElementById('helpModal').style.display = 'block'; }
+function closeHelp() { document.getElementById('helpModal').style.display = 'none'; }
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeHelp(); });
 
 // ════════ סקירת חשד ════════
 const KIND_LABELS = {

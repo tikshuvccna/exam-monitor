@@ -390,6 +390,11 @@ async function main() {
     ok(rv.counts['scan-ai'] === 2, 'alert from the Python watcher reached the review list', JSON.stringify(rv.counts));
   } else console.log('  - python not found, skipping scanner e2e');
 
+  // server info for the teacher's "copy student link" button
+  ok((await http('GET', '/server-info')).status === 403, 'server-info needs login');
+  const si = JSON.parse((await http('GET', '/server-info', { headers: { Cookie: good.cookie } })).body);
+  ok(si.port === PORT && Array.isArray(si.studentUrls) && si.studentUrls.every(u => u.startsWith('https://') && u.endsWith(`:${PORT}/student.html`)), 'server-info lists student URLs', JSON.stringify(si));
+
   // report carries suspicion columns
   const rep2 = await http('GET', '/download-report', { headers: { Cookie: good.cookie } });
   ok(rep2.body.includes('ציון חשד') && rep2.body.includes('צילומי ראיה'), 'CSV report has suspicion score columns');

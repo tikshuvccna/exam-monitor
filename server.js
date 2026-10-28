@@ -46,16 +46,21 @@ const cert = fs.readFileSync(path.join(__dirname, 'cert.pem'));
 const key  = fs.readFileSync(path.join(__dirname, 'key.pem'));
 
 // ── TURN ─────────────────────────────────────────────────────
-// כתובת ה-LAN של המחשב משמשת ככתובת הריליי; עם 0.0.0.0 הלקוחות מקבלים כתובת לא שמישה
-function pickLanIp() {
-  const all = [];
-  Object.values(os.networkInterfaces()).forEach(list => (list || []).forEach(a => {
-    if (a.family === 'IPv4' && !a.internal) all.push(a.address);
+// כתובות ה-LAN של המחשב, לפי סדר עדיפות. מתאמים וירטואליים (VMware, VPN, Tailscale...) בסוף,
+// כי תלמידים לא יכולים להגיע אליהם. הראשונה ברשימה היא הכתובת הסבירה ביותר לתלמידים.
+function lanAddresses() {
+  const out = [];
+  Object.entries(os.networkInterfaces()).forEach(([name, list]) => (list || []).forEach(a => {
+    if (a.family !== 'IPv4' || a.internal || a.address.startsWith('169.254.')) return;
+    const cgnat = /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(a.address);   // 100.64.0.0/10 (Tailscale ועוד)
+    const virtual = cgnat || /vmware|virtualbox|vbox|vethernet|hyper-v|wsl|docker|tailscale|zerotier|vpn|bluetooth|pseudo/i.test(name);
+    const rank = a.address.startsWith('192.168.') ? 0 : a.address.startsWith('10.') ? 1 : /^172\.(1[6-9]|2\d|3[01])\./.test(a.address) ? 2 : 3;
+    out.push({ address: a.address, virtual, rank });
   }));
-  const rank = ip => ip.startsWith('192.168.') ? 0 : ip.startsWith('10.') ? 1 : /^172\.(1[6-9]|2\d|3[01])\./.test(ip) ? 2 : 3;
-  all.sort((a, b) => rank(a) - rank(b));
-  return all[0] || '127.0.0.1';
+  out.sort((x, y) => (x.virtual - y.virtual) || (x.rank - y.rank));
+  return out.map(x => x.address);
 }
+function pickLanIp() { return lanAddresses()[0] || '127.0.0.1'; }
 const RELAY_IP = cfg.relayIp || pickLanIp();
 
 const turnServer = new Turn({
@@ -506,6 +511,15 @@ function handleRequest(req, res) {
       res.writeHead(200, { 'Content-Type': 'image/jpeg', 'Cache-Control': 'private, max-age=3600' });
       res.end(data);
     });
+    return;
+  }
+
+  // כתובות שהתלמידים צריכים להקליד (כתובות ה-LAN של מחשב המורה) - להצגה בדף המורה
+  if (pathname === '/server-info') {
+    if (!validSession(req.headers.cookie)) { res.writeHead(403); res.end(); return; }
+    const ips = lanAddresses();
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+    res.end(JSON.stringify({ port: Number(PORT), studentUrls: ips.map(ip => `https://${ip}:${PORT}/student.html`) }));
     return;
   }
 
