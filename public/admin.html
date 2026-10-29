@@ -36,7 +36,13 @@
 
   .grid-area { flex:1; padding:12px; overflow-y:auto; min-width:0; }
   .grid-label { font-size:11px; font-family:'IBM Plex Mono',monospace; color:var(--text2); text-transform:uppercase; letter-spacing:1.5px; margin-bottom:10px; }
-  .video-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(220px,1fr)); gap:10px; }
+  .video-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(var(--card-min,220px),1fr)); gap:10px; }
+  .grid-head { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:10px; }
+  .grid-head .grid-label { margin-bottom:0; }
+  .size-ctl { display:flex; align-items:center; gap:8px; font-size:12px; color:var(--text2); }
+  .size-ctl input[type=range] { width:160px; accent-color:var(--accent,#00d4aa); cursor:pointer; }
+  .size-ctl .size-ico { user-select:none; }
+  .size-ctl button { background:none; border:1px solid var(--border); color:var(--text2); border-radius:6px; padding:2px 8px; font-size:11px; cursor:pointer; }
 
   .student-card { background:var(--surface); border:1px solid var(--border); border-radius:8px; overflow:visible; position:relative; }
   .student-card.disconnected { opacity:0.4; border-color:var(--danger); }
@@ -179,7 +185,16 @@
 
 <div class="main">
   <div class="grid-area">
-    <div class="grid-label">מסכי תלמידים</div>
+    <div class="grid-head">
+      <div class="grid-label">מסכי תלמידים</div>
+      <div class="size-ctl" title="גודל המסכים — ככל שהם קטנים יותר, נכנסים יותר מסכים בשורה">
+        <span class="size-ico" style="font-size:11px;">▪▪▪</span>
+        <input type="range" id="sizeSlider" min="120" max="640" step="10" value="220" aria-label="גודל מסכי התלמידים">
+        <span class="size-ico" style="font-size:16px;">▪</span>
+        <span id="sizeInfo" style="min-width:64px;font-family:'IBM Plex Mono',monospace;"></span>
+        <button type="button" id="sizeReset" title="חזרה לברירת מחדל">איפוס</button>
+      </div>
+    </div>
     <div class="video-grid" id="videoGrid">
       <div class="empty-state" id="emptyState">ממתין לחיבור תלמידים...</div>
     </div>
@@ -1059,6 +1074,31 @@ async function handleBroadcastAnswer(msg) {
   const pc = bcPeers[msg.from];
   if (pc) { try { await pc.setRemoteDescription(msg.answer); } catch {} }
 }
+
+// ── סליידר גודל מסכי התלמידים (קובע גם כמה מסכים נכנסים בשורה) ──
+(function () {
+  const slider = document.getElementById('sizeSlider'), info = document.getElementById('sizeInfo');
+  const grid = document.getElementById('videoGrid'), DEFAULT = 220;
+  const KEY = 'examGridCardMin';
+  function refreshInfo() {
+    const cols = getComputedStyle(grid).gridTemplateColumns.split(' ').filter(Boolean).length;
+    info.textContent = cols + ' בשורה';
+  }
+  function apply(v, save) {
+    v = Math.min(+slider.max, Math.max(+slider.min, +v || DEFAULT));
+    slider.value = v;
+    grid.style.setProperty('--card-min', v + 'px');
+    refreshInfo();
+    if (save) { try { localStorage.setItem(KEY, String(v)); } catch {} }
+  }
+  let saved = DEFAULT;
+  try { saved = +localStorage.getItem(KEY) || DEFAULT; } catch {}
+  apply(saved, false);
+  slider.addEventListener('input', () => apply(slider.value, true));
+  document.getElementById('sizeReset').addEventListener('click', () => apply(DEFAULT, true));
+  if (window.ResizeObserver) new ResizeObserver(refreshInfo).observe(grid);
+  else window.addEventListener('resize', refreshInfo);
+})();
 </script>
 </body>
 </html>

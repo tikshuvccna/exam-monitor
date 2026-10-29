@@ -121,9 +121,10 @@ function openExamView(url) {
     // הגבלה רכה: אם הניווט יוצא מהדומיינים המאושרים - מדווחים למורה (לא חוסמים)
     examView.webContents.on('did-navigate', (e, navUrl) => checkApprovedNav(navUrl));
     examView.webContents.on('did-navigate-in-page', (e, navUrl) => checkApprovedNav(navUrl));
-    // חלון חדש (target=_blank / window.open) נפתח באותה תצוגה, לא כחלון חופשי מחוץ ל-kiosk
+    // חלון חדש (target=_blank / window.open, למשל לחיצה על תמונה) נפתח בחלון צף מעל המבחן,
+    // כך שדף המבחן נשאר פתוח מתחת ואין חלון חופשי מחוץ ל-kiosk
     examView.webContents.setWindowOpenHandler(({ url: u }) => {
-      if (/^https?:\/\//i.test(u)) examView.webContents.loadURL(u);
+      openViewer(u);
       return { action: 'deny' };
     });
   } else if (examViewUrl === url) {
@@ -142,12 +143,55 @@ function applyExamBounds() {
   examView.setBounds(examBounds());
 }
 function closeExamView() {
+  closeViewer();
   if (examView && win) { win.removeBrowserView(examView); examView.webContents.destroy(); }
   examView = null; examViewUrl = ''; examHost = '';
+}
+
+// חלון צף לתמונות/קישורים שנפתחים מתוך אתר המבחן (Esc או ✕ לסגירה). דף המבחן נשאר חי מתחתיו.
+let viewer = null;
+function closeViewer() {
+  if (viewer && !viewer.isDestroyed()) viewer.destroy();
+  viewer = null;
+}
+function openViewer(url) {
+  if (!win || !/^https?:\/\//i.test(url)) return;
+  if (viewer && !viewer.isDestroyed()) { viewer.loadURL(url); viewer.show(); return; }
+  const wa = screen.getPrimaryDisplay().workAreaSize;
+  viewer = new BrowserWindow({
+    parent: win, width: Math.round(wa.width * 0.8), height: Math.round(wa.height * 0.85), center: true,
+    minimizable: false, fullscreenable: false, autoHideMenuBar: true, backgroundColor: '#0f172a',
+    title: 'לסגירה: Esc או ✕',
+    webPreferences: { contextIsolation: true, sandbox: true },
+  });
+  const v = viewer;
+  v.removeMenu();
+  v.setAlwaysOnTop(true, 'screen-saver', 1);   // מעל חלון ה-kiosk וה-overlay
+  v.webContents.session.setCertificateVerifyProc(certVerify);
+  v.on('closed', () => { if (viewer === v) viewer = null; });
+  v.webContents.on('before-input-event', (e, input) => {
+    if (input.type === 'keyDown' && input.key === 'Escape') v.close();
+  });
+  // בתוך החלון הצף נשארים באותו חלון; ניווט פנימי נבדק מול הרשימה המאושרת
+  v.webContents.setWindowOpenHandler(({ url: u }) => {
+    if (/^https?:\/\//i.test(u)) v.loadURL(u);
+    return { action: 'deny' };
+  });
+  // תמונה היא לא "ניווט לאתר" - לא מדווחים עליה גם אם היא מאוחסנת בדומיין אחר
+  const check = navUrl => {
+    v.webContents.executeJavaScript('document.contentType').then(t => {
+      if (!/^image\//i.test(String(t))) checkApprovedNav(navUrl);
+    }).catch(() => checkApprovedNav(navUrl));
+  };
+  v.webContents.on('did-navigate', (e, navUrl) => check(navUrl));
+  v.webContents.on('did-navigate-in-page', (e, navUrl) => check(navUrl));
+  v.once('ready-to-show', () => v.show());
+  v.loadURL(url);
 }
 // BrowserView תמיד מצויר מעל הדף. כדי שמסך הנעילה / שידור המורה יראו - מסירים אותו זמנית
 function setExamHidden(hidden) {
   examViewHidden = !!hidden;
+  if (examViewHidden) closeViewer();   // נעילה / שידור מורה - שום חלון צף לא נשאר מעל
   if (!examView || !win) return;
   if (examViewHidden) { try { win.removeBrowserView(examView); } catch {} }
   else { try { win.addBrowserView(examView); applyExamBounds(); } catch {} }

@@ -1,4 +1,6 @@
 const https  = require('https');
+const http   = require('http');
+const net    = require('net');
 const fs     = require('fs');
 const path   = require('path');
 const crypto = require('crypto');
@@ -39,28 +41,63 @@ const TURN_PORT      = process.env.EXAM_TURN_PORT  || cfg.turnPort      || 3478;
 const TURN_USER      = process.env.EXAM_TURN_USER  || cfg.turnUser      || 'examuser';
 const TURN_PASS      = process.env.EXAM_TURN_PASS  || cfg.turnPass      || 'exampass';
 const ADMIN_PASSWORD = String(process.env.EXAM_ADMIN_PASS || cfg.adminPassword || 'bandwidth');
-const DEFAULT_PASSWORD_IN_USE = ADMIN_PASSWORD === 'bandwidth';
+// אזהרה רק כשלא הוגדרה סיסמה בכלל (נפלנו לברירת המחדל). סיסמה שנבחרה ב-config.json - גם אם פשוטה - לא מציקה בכל הפעלה
+const DEFAULT_PASSWORD_IN_USE = !process.env.EXAM_ADMIN_PASS && !cfg.adminPassword;
 
 // ── SSL ──────────────────────────────────────────────────────
 const cert = fs.readFileSync(path.join(__dirname, 'cert.pem'));
 const key  = fs.readFileSync(path.join(__dirname, 'key.pem'));
 
 // ── TURN ─────────────────────────────────────────────────────
-// כתובות ה-LAN של המחשב, לפי סדר עדיפות. מתאמים וירטואליים (VMware, VPN, Tailscale...) בסוף,
-// כי תלמידים לא יכולים להגיע אליהם. הראשונה ברשימה היא הכתובת הסבירה ביותר לתלמידים.
+// סדר עדיפות הכתובות (למורה ולתלמידים): Wi-Fi, אחר כך LAN (כבל), אחר כך נקודה חמה, ואחר כך כל השאר.
+// מתאמים וירטואליים (VMware, VPN, Tailscale...) תמיד בסוף, כי תלמידים לא יכולים להגיע אליהם.
+const KIND_ORDER = { wifi: 0, lan: 1, hotspot: 2, other: 3, virtual: 4 };
+const VIRTUAL_RE = /vmware|virtualbox|vbox|vethernet|hyper-v|wsl|docker|tailscale|zerotier|wireguard|openvpn|vpn|tap-|bluetooth|pseudo|loopback/i;
+const cleanName = n => String(n).replace(/[‎‏‪-‮]/g, '').trim();   // Windows מוסיף סימני כיווניות לשמות
+
+// ב-Windows שם המתאם ניתן לשינוי ומתורגם, לכן מסווגים לפי תיאור החומרה (Get-NetAdapter). נשמר במטמון.
+let adapterCache = null, adapterCacheAt = 0;
+function windowsAdapters() {
+  if (process.platform !== 'win32') return {};
+  if (adapterCache && Date.now() - adapterCacheAt < 60000) return adapterCache;
+  adapterCacheAt = Date.now();
+  try {
+    const json = require('child_process').execFileSync('powershell', ['-NoProfile', '-NonInteractive', '-Command',
+      '[Console]::OutputEncoding=[Text.Encoding]::UTF8; Get-NetAdapter | Select-Object Name,InterfaceDescription,PhysicalMediaType | ConvertTo-Json -Compress'],
+      { encoding: 'utf8', timeout: 8000, windowsHide: true });
+    const map = {};
+    [].concat(JSON.parse(json) || []).forEach(a => { map[cleanName(a.Name)] = { desc: a.InterfaceDescription || '', media: a.PhysicalMediaType || '' }; });
+    adapterCache = map;
+  } catch { adapterCache = adapterCache || {}; }
+  return adapterCache;
+}
+
+function adapterKind(name, address) {
+  const n = cleanName(name);
+  let info = windowsAdapters()[n];
+  if (process.platform === 'win32' && !info) { adapterCacheAt = 0; info = windowsAdapters()[n]; }   // מתאם חדש מאז הבדיקה האחרונה
+  const desc = info ? info.desc : '';
+  const media = info ? info.media : '';
+  const cgnat = /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(address);   // 100.64.0.0/10 (Tailscale ועוד)
+  if (cgnat || VIRTUAL_RE.test(n) || VIRTUAL_RE.test(desc)) return 'virtual';
+  if (/wi-?fi direct|hosted network/i.test(desc) || /hotspot|local area connection\*|^ap\d|^ap$/i.test(n) || address === '192.168.137.1') return 'hotspot';
+  if (/802\.11/.test(media) || /wireless|wi-?fi|wlan/i.test(desc) || /wi-?fi|wlan|wireless|^wl/i.test(n)) return 'wifi';
+  if (/802\.3/.test(media) || /ethernet|gbe|lan\b/i.test(desc) || /ethernet|^eth|^en/i.test(n)) return 'lan';
+  return 'other';
+}
+
 function lanAddresses() {
   const out = [];
   Object.entries(os.networkInterfaces()).forEach(([name, list]) => (list || []).forEach(a => {
     if (a.family !== 'IPv4' || a.internal || a.address.startsWith('169.254.')) return;
-    const cgnat = /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(a.address);   // 100.64.0.0/10 (Tailscale ועוד)
-    const virtual = cgnat || /vmware|virtualbox|vbox|vethernet|hyper-v|wsl|docker|tailscale|zerotier|vpn|bluetooth|pseudo/i.test(name);
+    const kind = adapterKind(name, a.address);
     const rank = a.address.startsWith('192.168.') ? 0 : a.address.startsWith('10.') ? 1 : /^172\.(1[6-9]|2\d|3[01])\./.test(a.address) ? 2 : 3;
-    out.push({ address: a.address, virtual, rank });
+    out.push({ address: a.address, kind, rank });
   }));
-  out.sort((x, y) => (x.virtual - y.virtual) || (x.rank - y.rank));
-  return out.map(x => x.address);
+  out.sort((x, y) => (KIND_ORDER[x.kind] - KIND_ORDER[y.kind]) || (x.rank - y.rank));
+  return out;
 }
-function pickLanIp() { return lanAddresses()[0] || '127.0.0.1'; }
+function pickLanIp() { return (lanAddresses()[0] || { address: '127.0.0.1' }).address; }
 const RELAY_IP = cfg.relayIp || pickLanIp();
 
 const turnServer = new Turn({
@@ -519,7 +556,7 @@ function handleRequest(req, res) {
     if (!validSession(req.headers.cookie)) { res.writeHead(403); res.end(); return; }
     const ips = lanAddresses();
     res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
-    res.end(JSON.stringify({ port: Number(PORT), studentUrls: ips.map(ip => `https://${ip}:${PORT}/student.html`) }));
+    res.end(JSON.stringify({ port: Number(PORT), studentUrls: ips.map(x => `https://${x.address}:${PORT}/student.html`) }));
     return;
   }
 
@@ -662,6 +699,33 @@ const server = https.createServer({ key, cert }, (req, res) => {
   }
 });
 server.on('clientError', (err, socket) => { try { socket.destroy(); } catch {} });
+
+// ── הפניה מ-HTTP ל-HTTPS ──────────────────────────────────────
+// תלמיד שמקליד http://... בטעות מופנה אוטומטית ל-https. אותו פורט משרת את שניהם: הבייט הראשון
+// בחיבור מוצפן (TLS) הוא 0x16, כל דבר אחר הוא HTTP רגיל.
+function httpsLocation(req) {
+  const m = /^(\[[0-9a-f:]+\]|[a-z0-9.-]+)(?::\d+)?$/i.exec(String(req.headers.host || ''));
+  const host = m ? m[1] : pickLanIp();   // Host לא תקין -> לא משקפים אותו חזרה
+  return `https://${host}${Number(PORT) === 443 ? '' : ':' + PORT}${req.url && req.url[0] === '/' ? req.url : '/'}`;
+}
+function redirectHandler(req, res) {
+  res.writeHead(307, { Location: httpsLocation(req), 'Cache-Control': 'no-store' });   // 307 ולא 301: דפדפנים לא שומרים לצמיתות
+  res.end();
+}
+const redirectServer = http.createServer(redirectHandler);
+redirectServer.on('clientError', (err, socket) => { try { socket.destroy(); } catch {} });
+
+const mux = net.createServer(socket => {
+  socket.on('error', () => {});
+  socket.setTimeout(10000, () => socket.destroy());   // חיבור שלא שלח כלום
+  socket.once('data', buf => {
+    socket.setTimeout(0);
+    socket.pause();
+    socket.unshift(buf);
+    (buf[0] === 0x16 ? server : redirectServer).emit('connection', socket);
+    process.nextTick(() => socket.resume());
+  });
+});
 
 // ── WebSocket ─────────────────────────────────────────────────
 const wss = new WebSocketServer({ server, maxPayload: 256 * 1024 });
@@ -1151,7 +1215,7 @@ setInterval(() => {
 }, 30000);
 
 // טיפול בשגיאת "הפורט תפוס" - הודעה ברורה במקום קריסה מכוערת
-server.on('error', err => {
+mux.on('error', err => {
   if (err.code === 'EADDRINUSE') {
     console.error(`\n❌ הפורט ${PORT} כבר בשימוש - כנראה השרת כבר פועל בחלון אחר.`);
     console.error(`   סגור את החלון הקודם של השרת ונסה שוב, או הרץ:`);
@@ -1166,18 +1230,38 @@ server.on('error', err => {
 process.on('uncaughtException', err => { console.error('uncaughtException:', err && err.stack || err); });
 process.on('unhandledRejection', err => { console.error('unhandledRejection:', err && err.stack || err); });
 
-server.listen(PORT, () => {
+const KIND_LABEL = { wifi: 'Wi-Fi', lan: 'LAN', hotspot: 'נקודה חמה', other: 'אחר', virtual: 'וירטואלי' };
+
+// פורט 80: מי שמקליד רק את ה-IP (בלי פורט) מגיע לכאן ומופנה ל-https. אופציונלי - אם הפורט תפוס או חסום, מדלגים.
+const HTTP_REDIRECT_PORT = cfg.httpRedirectPort === undefined ? 80 : Number(cfg.httpRedirectPort);
+if (HTTP_REDIRECT_PORT > 0 && HTTP_REDIRECT_PORT !== Number(PORT)) {
+  const r80 = http.createServer(redirectHandler);
+  r80.on('clientError', (err, socket) => { try { socket.destroy(); } catch {} });
+  r80.on('error', err => console.warn(`ℹ️  הפניית HTTP בפורט ${HTTP_REDIRECT_PORT} לא פעילה (${err.code}). הפניה בפורט ${PORT} כן עובדת.`));
+  r80.listen(HTTP_REDIRECT_PORT);
+}
+
+mux.listen(PORT, () => {
+  const ips = lanAddresses();
+  const mainHost = ips.length ? ips[0].address : 'localhost';
   console.log(`\n✅ שרת פועל!`);
-  console.log(`\n👨‍🏫 דף ניהול:   https://localhost:${PORT}/admin.html`);
+  console.log(`\n👨‍🏫 דף ניהול:   https://${mainHost}:${PORT}/admin.html   (או במחשב הזה: https://localhost:${PORT}/admin.html)`);
   if (generatedPassword) {
-    console.log(`\n🔐 נוצר config.json חדש. סיסמת מורה: ${generatedPassword}`);
-    console.log(`   (נשמרה ב-config.json; ניתן לשנות שם)`);
+    console.log(`\n🔐 נוצר config.json חדש עם סיסמת מורה אקראית. הסיסמה לא מוצגת כאן - פתח את config.json (שדה adminPassword), שם גם אפשר לשנות אותה.`);
   } else if (DEFAULT_PASSWORD_IN_USE) {
     console.log(`\n⚠️  סיסמת המורה היא ברירת המחדל הידועה! שנה את adminPassword ב-config.json`);
   } else {
     console.log(`\n🔐 סיסמת מורה: ב-config.json`);
   }
-  console.log(`\n🔎 סקירת חשד: כפתור "סקירה" בדף המורה. סורק חי: python scanner.py --watch --server https://localhost:${PORT} --key ${SCANNER_KEY}`);
-  console.log(`\n👨‍🎓 לתלמידים:   https://<IP שלך>:${PORT}/student.html`);
+  console.log(`\n🔎 סקירת חשד: כפתור "סקירה" בדף המורה. סורק חי: python scanner.py --watch --server https://localhost:${PORT} --key <scannerKey מתוך config.json>`);
+  if (ips.length) {
+    console.log(`\n👨‍🎓 לתלמידים:   https://${mainHost}:${PORT}/student.html   ← הקישור הראשי (${KIND_LABEL[ips[0].kind]})`);
+    if (ips.length > 1) {
+      console.log(`   קישורים חלופיים, לפי סדר עדיפות (Wi-Fi → LAN → נקודה חמה → אחר):`);
+      ips.slice(1).forEach(x => console.log(`     https://${x.address}:${PORT}/student.html   (${KIND_LABEL[x.kind]})`));
+    }
+  } else {
+    console.log(`\n👨‍🎓 לתלמידים:   לא נמצא חיבור רשת! התחבר ל-Wi-Fi / LAN / נקודה חמה והפעל מחדש.`);
+  }
   console.log(`\nCtrl+C לעצירה\n`);
 });

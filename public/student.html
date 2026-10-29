@@ -547,9 +547,23 @@ function reportEvent(obj) {
   if (obj && obj.kind) captureEvidence(obj.kind);   // כל דגל מגיע עם צילום מסך כראיה
 }
 
+// זמן חסד: עזיבה קצרה של הדף (למשל לחיצה על תמונה שנפתחת בכרטיסייה חדשה) לא מדווחת.
+// מדווחים רק אם התלמיד נעדר מעל TAB_GRACE_MS, וגם אז הצילום נלקח בזמן ההיעדרות (ראיה טובה יותר).
+// אחרי TAB_GRACE_MAX חזרות מהירות הזמן הזה נעלם - כדי שלא ינצלו אותו להצצות חוזרות.
+const TAB_GRACE_MS = 20000, TAB_GRACE_MAX = 3;
+let _tabTimer = null, _tabReported = false, _briefExits = 0;
 document.addEventListener('visibilitychange', () => {
   if (!studentId) return;
-  reportEvent({ kind: document.hidden ? 'tab-hidden' : 'tab-visible' });
+  if (document.hidden) {
+    const report = () => { _tabTimer = null; _tabReported = true; reportEvent({ kind: 'tab-hidden' }); };
+    if (_briefExits >= TAB_GRACE_MAX) report();
+    else _tabTimer = setTimeout(report, TAB_GRACE_MS);
+  } else if (_tabTimer) {            // חזר בתוך זמן החסד - לא דווח כלום
+    clearTimeout(_tabTimer); _tabTimer = null; _briefExits++;
+  } else if (_tabReported) {         // חזר אחרי שכבר דווחה עזיבה
+    _tabReported = false;
+    reportEvent({ kind: 'tab-visible' });
+  }
 });
 window.addEventListener('paste', e => {
   if (!studentId) return;

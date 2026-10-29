@@ -16,9 +16,11 @@ function Add-Rule($name, $protocol, $ports) {
   }
 }
 
-# TURN first, web rule last: start-server.bat treats the web rule as the "setup done" marker
+# TURN first, HTTP rule last: start-server.bat treats the "<name> HTTP" rule as the "setup done" marker
 Add-Rule "$ruleName TURN UDP" "UDP" @($TurnPort, "49152-65535")
 Add-Rule $ruleName "TCP" @($Port)
+# Port 80 only redirects http:// to https:// (for students who type the IP without a port)
+Add-Rule "$ruleName HTTP" "TCP" @(80)
 
 # Windows creates a Block rule for Node.js when someone clicks Cancel on its firewall popup.
 # A Block rule overrides Allow rules and silently stops students from connecting.

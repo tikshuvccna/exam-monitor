@@ -33,7 +33,7 @@ if not exist "cert.pem" (
 )
 
 REM --- One-time: let student PCs on the LAN reach the server (Windows asks for permission once) ---
-netsh advfirewall firewall show rule name="Exam Monitor 4555" >nul 2>nul
+netsh advfirewall firewall show rule name="Exam Monitor 4555 HTTP" >nul 2>nul
 if errorlevel 1 (
     echo.
     echo ============================================================
@@ -41,7 +41,7 @@ if errorlevel 1 (
     echo ============================================================
     echo   Windows blocks other computers from reaching this PC.
     echo   To let students connect, this program will now:
-    echo     1. Open TCP 4555 ^(web^) and UDP 3478 + relay ports ^(TURN^) in the firewall
+    echo     1. Open TCP 4555 ^(web^), TCP 80 ^(redirect http to https^) and UDP 3478 + relay ports ^(TURN^)
     echo     2. Remove old Windows rules that block Node.js, if any
     echo   Windows will ask for administrator permission - click Yes.
     echo   This happens only once. Nothing else is changed.
@@ -49,7 +49,7 @@ if errorlevel 1 (
     echo.
     pause
     call :open_firewall
-    netsh advfirewall firewall show rule name="Exam Monitor 4555" >nul 2>nul
+    netsh advfirewall firewall show rule name="Exam Monitor 4555 HTTP" >nul 2>nul
     if errorlevel 1 (
         echo.
         echo The firewall was NOT opened ^(permission was denied^).
@@ -67,22 +67,10 @@ for /f "tokens=5" %%p in ('netstat -ano ^| findstr ":4555" ^| findstr "LISTENING
     taskkill /F /PID %%p >nul 2>nul
 )
 
-echo [3/3] Detecting your IP address...
-echo.
-echo ============================================
-echo   Links for students ^(share these^):
-echo ============================================
-for /f "tokens=2 delims=:" %%a in ('ipconfig ^| findstr /c:"IPv4"') do (
-    set "ip=%%a"
-    call :trim_and_print
-)
-echo.
-echo   Teacher page ^(this PC^):  https://localhost:4555/admin.html
-echo ============================================
-echo   ^(If a link does not work, try a different one - use the
-echo    address on the same Wi-Fi/LAN as the students.^)
-echo.
-echo Starting server... ^(to stop: close this window or Ctrl+C^)
+echo [3/3] Starting server...
+echo   The teacher and student links are printed below, in priority order:
+echo   Wi-Fi first, then LAN, then hotspot, then anything else.
+echo   ^(to stop: close this window or Ctrl+C^)
 echo.
 
 node server.js
@@ -91,12 +79,6 @@ echo.
 echo Server stopped.
 pause
 exit /b 0
-
-:trim_and_print
-REM remove leading space from the IP, then print
-set "ip=%ip: =%"
-echo   https://%ip%:4555/student.html
-goto :eof
 
 :open_firewall
 REM kept outside the if-block so folder names containing ) or & do not break parsing

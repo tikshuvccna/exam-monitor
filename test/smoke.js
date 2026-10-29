@@ -13,6 +13,7 @@ const WebSocket = require('ws');
 const ROOT = path.join(__dirname, '..');
 const PORT = 4600 + Math.floor(Math.random() * 300);
 const TURN_PORT = PORT + 1000;
+const REDIRECT_PORT = PORT + 2000;
 const PASS = 'test-pass-' + crypto.randomBytes(3).toString('hex');
 let tmp, proc, passed = 0, failed = 0;
 
@@ -27,7 +28,7 @@ function setup() {
   for (const f of ['server.js', 'generateCert.js']) fs.copyFileSync(path.join(ROOT, f), path.join(tmp, f));
   fs.cpSync(path.join(ROOT, 'public'), path.join(tmp, 'public'), { recursive: true });
   fs.symlinkSync(path.join(ROOT, 'node_modules'), path.join(tmp, 'node_modules'), 'junction');
-  fs.writeFileSync(path.join(tmp, 'config.json'), JSON.stringify({ adminPassword: PASS, port: PORT, turnPort: TURN_PORT, turnPass: 'tp' }));
+  fs.writeFileSync(path.join(tmp, 'config.json'), JSON.stringify({ adminPassword: PASS, port: PORT, turnPort: TURN_PORT, turnPass: 'tp', httpRedirectPort: REDIRECT_PORT }));
   fs.writeFileSync(path.join(tmp, 'SECRET.txt'), 'top-secret-outside-public');
   execFileSync(process.execPath, ['generateCert.js'], { cwd: tmp, stdio: 'ignore' });
 }
@@ -135,6 +136,19 @@ async function main() {
   }
   const idx = await http('GET', '/student.html');
   ok(idx.status === 200 && idx.body.includes('joinExam'), 'student.html served');
+
+  // הפניה מ-HTTP ל-HTTPS: גם באותו פורט וגם בפורט ההפניה הנפרד
+  const plainGet = (port, host) => new Promise(resolve => {
+    const req = require('http').request({ host: '127.0.0.1', port, path: '/student.html?a=1', headers: { Host: host } }, res => { res.resume(); resolve(res); });
+    req.on('error', e => resolve({ statusCode: 0, headers: {}, err: e }));
+    req.end();
+  });
+  for (const [label, port] of [['same port', PORT], ['redirect port', REDIRECT_PORT]]) {
+    const r = await plainGet(port, `192.168.1.5:${port}`);
+    ok([302, 307].includes(r.statusCode) && r.headers.location === `https://192.168.1.5:${PORT}/student.html?a=1`, `plain http redirects to https (${label})`, r.statusCode + ' ' + r.headers.location);
+  }
+  const badHost = await plainGet(PORT, 'evil.com/<x>');
+  ok(!(badHost.headers.location || '').includes('evil.com/<x>'), 'bad Host header is not reflected in redirect', badHost.headers.location);
   ok(!!idx.headers['content-security-policy'], 'CSP header on html');
   ok((await http('GET', '/download-report')).status === 403, 'report needs login');
   ok((await http('GET', '/download-log')).status === 403, 'log needs login');
