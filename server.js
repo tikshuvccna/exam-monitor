@@ -1134,6 +1134,7 @@ function handleMessage(ws, msg, ip, req) {
       'paste':        `📋 ${sname} הדביק טקסט (${length} תווים)${preview ? ': "'+preview+'"' : ''}`,
       'copy':         `📋 ${sname} העתיק טקסט מהמבחן`,
       'lock-escape':  `🚪 ${sname} עזב את המסך הנעול`,
+      'exam-tab-mode':`🪟 ${sname} פתח את המבחן בלשונית נפרדת (זיהוי החלפת לשונית כבוי לו; המסך המשותף ממשיך להיות מנוטר)`,
       // גילויי AI מהאפליקציה
       'ai-clip-question': `🤖 ${sname} העתיק את שאלת המבחן ללוח${detail ? ': "'+detail+'"' : ''}`,
       'ai-clip-text':     `🤖 ${sname} העתיק טקסט ללוח${detail ? ' ('+detail+')' : ''}`,

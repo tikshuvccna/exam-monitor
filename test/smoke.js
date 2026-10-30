@@ -208,6 +208,42 @@ async function main() {
   ok(!(await victim.c.next(type('end-exam'), 100)), 'student cannot send control commands');
   ok(!admin.msgs.some(m => m.type === 'expected' || m.type === 'auto-shots-status'), 'student cannot change settings');
 
+  // ── ספירת תלמידים: צפוי / מחוברים / התנתקות ──────────────────
+  console.log('\nStudent counting');
+  {
+    const a2 = client(good.cookie); await a2.open();
+    a2.send({ type: 'admin-join' });
+    const s0 = await a2.next(type('state'));
+    const live0 = s0.students.filter(s => s.online).length;
+    ok(s0.students.every(s => typeof s.online === 'boolean'), 'state lists online flag per student');
+
+    a2.send({ type: 'set-expected', count: live0 + 1 });
+    const e1 = await a2.next(type('expected'));
+    ok(e1 && e1.count === live0 + 1, 'expected count is set and echoed', JSON.stringify(e1));
+
+    const extra1 = await student('Count One'), extra2 = await student('Count Two');
+    const over = await a2.next(m => m.type === 'alert' && /יותר תלמידים מהצפוי/.test(m.message));
+    ok(!!over, 'alert when more students than expected connect');
+
+    a2.drain();
+    extra2.c.close();
+    const left = await a2.next(m => m.type === 'student-leave' && m.id === extra2.j.id);
+    ok(!!left, 'admin notified when a student disconnects');
+    const st2 = await new Promise(async res => { const c3 = client(good.cookie); await c3.open(); c3.send({ type: 'admin-join' }); const s = await c3.next(type('state')); c3.close(); res(s); });
+    ok(st2.students.filter(s => s.online).length === live0 + 1, 'live count drops by one after disconnect', `${st2.students.filter(s => s.online).length} vs ${live0 + 1}`);
+
+    a2.send({ type: 'set-expected', count: live0 + 2 });
+    await a2.next(type('expected'));
+    a2.drain();
+    extra1.c.close();
+    const under = await a2.next(m => m.type === 'alert' && /מחוברים \d+\/\d+/.test(m.message));
+    ok(!!under, 'alert when fewer students than expected are connected');
+
+    a2.send({ type: 'set-expected', count: 0 });
+    await a2.next(type('expected'));
+    a2.close();
+  }
+
   console.log('\nSignalling');
   victim.c.drain(); attacker.c.drain(); admin.drain();
   attacker.c.send({ type: 'offer', subtype: 'broadcast', target: victim.j.id, offer: { sdp: 'fake' } });

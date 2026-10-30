@@ -116,8 +116,17 @@
     <span style="color:#00d4aa;font-weight:700;">📝 מבחן</span>
     <span id="embedMsg" style="flex:1;color:#93c5fd;"></span>
     <span id="embedCd" style="font-family:monospace;color:#fcd34d;font-weight:700;"></span>
+    <button id="embedTabBtn" onclick="openExamInTab()" title="אם האתר מבקש סיסמה שוב ושוב או לא נטען - פותח אותו בלשונית נפרדת" style="background:#334155;color:#e2e8f0;border:1px solid #475569;border-radius:6px;padding:4px 10px;font-size:12px;cursor:pointer;">↗ נתקעת בסיסמה? פתח בלשונית נפרדת</button>
   </div>
-  <iframe id="embedFrame" style="flex:1;width:100%;border:none;background:#fff;" allow="clipboard-read; clipboard-write; camera; microphone"></iframe>
+  <div style="position:relative;flex:1;display:flex;">
+    <iframe id="embedFrame" style="flex:1;width:100%;border:none;background:#fff;" allow="clipboard-read; clipboard-write; camera; microphone"></iframe>
+    <div id="embedTabNote" style="display:none;position:absolute;inset:0;background:#0f172a;color:#e2e8f0;flex-direction:column;align-items:center;justify-content:center;gap:14px;font-family:sans-serif;text-align:center;padding:20px;">
+      <div style="font-size:40px;">🪟</div>
+      <div style="font-size:18px;font-weight:700;">המבחן נפתח בלשונית נפרדת</div>
+      <div style="font-size:14px;color:#94a3b8;max-width:420px;line-height:1.7;">השאר את הלשונית הזאת פתוחה ושתף את המסך עד סוף המבחן. הטיימר וההודעות מהמורה יופיעו כאן.</div>
+      <button onclick="openExamInTab()" style="background:#00d4aa;color:#000;border:none;border-radius:8px;padding:10px 22px;font-weight:700;font-size:15px;cursor:pointer;">↗ חזור ללשונית המבחן</button>
+    </div>
+  </div>
 </div>
 
 <!-- שכבת נעילת מסך -->
@@ -400,10 +409,41 @@ function showExamLinks(links) {
 
 // --- פתיחת אתר המבחן ---
 let _embedUrl = null;
+let _examTabMode = false;   // המבחן פתוח בלשונית נפרדת (אז החלפת לשונית היא דבר רגיל ולא מדווחת)
+let _embedLoads = [];
+
+// אתרים רבים לא שומרים התחברות בתוך iframe (עוגיות של צד שלישי), ואז הדף מבקש סיסמה שוב ושוב.
+// 3 טעינות תוך 90 שניות = כנראה זה המצב. מציעים לפתוח בלשונית נפרדת.
+function noteEmbedLoad() {
+  if (_examTabMode) return;
+  const now = Date.now();
+  _embedLoads = _embedLoads.filter(t => now - t < 90000);
+  _embedLoads.push(now);
+  if (_embedLoads.length >= 3) {
+    const m = document.getElementById('embedMsg');
+    m.textContent = '⚠️ הדף נטען שוב ושוב? אם הוא מבקש סיסמה בלולאה - לחץ "פתח בלשונית נפרדת".';
+    m.style.color = '#fcd34d';
+    document.getElementById('embedTabBtn').style.cssText += ';background:#f59e0b;color:#000;border-color:#f59e0b;';
+  }
+}
+
+function openExamInTab() {
+  if (!_embedUrl) return;
+  window.open(_embedUrl, 'examTab', 'noopener');
+  if (!_examTabMode) {
+    _examTabMode = true;
+    clearTimeout(_tabTimer); _tabTimer = null;
+    document.getElementById('embedFrame').src = 'about:blank';
+    document.getElementById('embedTabNote').style.display = 'flex';
+    // המורה צריך לדעת שבדיקת החלפת לשונית כבויה לתלמיד הזה
+    if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: 'event', kind: 'exam-tab-mode' }));
+  }
+}
 function openEmbeddedExam(url) {
   if (!url || !/^https?:\/\//i.test(url)) return;
   const same = (url === _embedUrl);
   _embedUrl = url;
+  if (same && _examTabMode) return;   // המבחן כבר פתוח בלשונית נפרדת - לא טוענים אותו שוב
   // באפליקציה: פתיחה אמיתית מעל הדף (נטען כרגיל, לא לבן). הניטור ממשיך ברקע.
   // האפליקציה לא טוענת מחדש אם אותו אתר כבר פתוח (חיבור מחדש אחרי ניתוק לא מאפס תשובות)
   if (window.examAgent?.openExam) {
@@ -419,7 +459,7 @@ function openEmbeddedExam(url) {
   view.style.display = 'flex';
   // אם האתר חוסם הטמעה (X-Frame-Options) - נזהה ונציע פתיחה בכרטיסייה
   let loaded = false;
-  frame.onload = () => { loaded = true; };
+  frame.onload = () => { loaded = true; noteEmbedLoad(); };
   setTimeout(() => {
     if (!loaded) {
       const m = document.getElementById('embedMsg');
@@ -441,7 +481,8 @@ function endExam() {
   document.getElementById('lockOverlay').style.display = 'none';
   endBroadcast();
   window.examAgent?.closeExam?.();   // סגירת תצוגת אתר המבחן
-  _embedUrl = null;
+  _embedUrl = null; _examTabMode = false;
+  document.getElementById('embedTabNote').style.display = 'none';
   showTeacherMessage('המבחן הסתיים. תודה!');
   if (window.examAgent?.quit) setTimeout(() => window.examAgent.quit(), 2500);
 }
@@ -553,7 +594,7 @@ function reportEvent(obj) {
 const TAB_GRACE_MS = 20000, TAB_GRACE_MAX = 3;
 let _tabTimer = null, _tabReported = false, _briefExits = 0;
 document.addEventListener('visibilitychange', () => {
-  if (!studentId) return;
+  if (!studentId || _examTabMode) return;   // המבחן בלשונית נפרדת: עזיבת הדף הזה צפויה
   if (document.hidden) {
     const report = () => { _tabTimer = null; _tabReported = true; reportEvent({ kind: 'tab-hidden' }); };
     if (_briefExits >= TAB_GRACE_MAX) report();

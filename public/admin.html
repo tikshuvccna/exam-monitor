@@ -73,6 +73,11 @@
 
   .card-info { padding:5px 8px; display:flex; align-items:center; gap:4px; }
   .card-info-text { flex:1; min-width:0; }
+  .card-info { position:relative; }
+  .card-actions { display:flex; gap:4px; flex-shrink:0; }
+  /* כרטיס קטן (הרבה תלמידים): הכפתורים מופיעים רק בריחוף, כדי ששם התלמיד יישאר קריא */
+  .video-grid.narrow .card-actions { display:none; position:absolute; right:4px; bottom:calc(100% + 4px); z-index:5; background:rgba(10,14,26,.85); padding:3px; border-radius:6px; }
+  .video-grid.narrow .student-card:hover .card-actions { display:flex; }
   .card-name { font-weight:600; font-size:12px; display:flex; align-items:center; gap:5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .dot { width:6px; height:6px; border-radius:50%; background:var(--accent); flex-shrink:0; }
   .dot.offline{background:var(--danger);}
@@ -159,6 +164,7 @@
 <div style="background:var(--surface2);border-bottom:1px solid var(--border);padding:6px 16px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12px;">
   <button class="secondary" onclick="openHelp()" title="הוראות שימוש מלאות" style="border-color:rgba(0,212,170,0.6);color:#5eead4;">❓ עזרה</button>
   <button class="secondary" onclick="copyStudentLink()" title="מעתיק את הכתובת שהתלמידים צריכים לפתוח. שלח להם אותה">📋 קישור לתלמידים</button>
+  <button class="secondary" onclick="toggleConnect()" title="מציג על כל המסך קישור גדול וקוד QR כדי שהתלמידים יתחברו בקלות. Esc או לחיצה סוגרים" style="border-color:rgba(0,212,170,0.6);color:#5eead4;">📱 הצג חיבור</button>
   <span style="width:1px;height:18px;background:var(--border);"></span>
   <span style="color:var(--text2);font-family:'IBM Plex Mono',monospace;">שליטה:</span>
   <label class="checkbox-label"><input type="checkbox" id="selectAll" onchange="toggleSelectAll()"> בחר הכל</label>
@@ -191,6 +197,7 @@
         <span class="size-ico" style="font-size:11px;">▪▪▪</span>
         <input type="range" id="sizeSlider" min="120" max="640" step="10" value="220" aria-label="גודל מסכי התלמידים">
         <span class="size-ico" style="font-size:16px;">▪</span>
+        <label class="checkbox-label" title="ממלא אוטומטית את המקום הפנוי כך שכל המסכים נראים בלי גלילה. מתעדכן כשמקפלים את סרגל האירועים"><input type="checkbox" id="sizeAuto"> אוטומטי</label>
         <span id="sizeInfo" style="min-width:64px;font-family:'IBM Plex Mono',monospace;"></span>
         <button type="button" id="sizeReset" title="חזרה לברירת מחדל">איפוס</button>
       </div>
@@ -266,6 +273,16 @@
   #toast{position:fixed;bottom:22px;left:50%;transform:translateX(-50%);background:#0f172a;border:1px solid #00d4aa;color:#e2e8f0;padding:10px 20px;border-radius:10px;z-index:7000;display:none;box-shadow:0 6px 30px rgba(0,0,0,.5);font-size:14px;}
 </style>
 <div id="toast"></div>
+<div id="connectOverlay" onclick="toggleConnect(false)" style="display:none;position:fixed;inset:0;z-index:2000;background:rgba(10,14,26,.97);flex-direction:column;align-items:center;justify-content:center;gap:18px;text-align:center;padding:24px;overflow:auto;cursor:pointer;">
+  <div style="font-size:clamp(22px,3.2vw,40px);font-weight:700;color:var(--accent);">איך מתחברים למבחן?</div>
+  <div style="font-size:clamp(14px,1.8vw,22px);color:var(--text);">סרקו את הקוד עם הטלפון, או הקלידו את הכתובת בדפדפן במחשב:</div>
+  <div id="connQr" style="background:#fff;border-radius:16px;padding:10px;width:min(46vh,70vw);height:min(46vh,70vw);"></div>
+  <div id="connMain" style="direction:ltr;font-family:'IBM Plex Mono',monospace;font-size:clamp(20px,3.6vw,48px);font-weight:600;color:#fff;user-select:all;word-break:break-all;"></div>
+  <div style="font-size:clamp(13px,1.6vw,20px);color:var(--text2);max-width:900px;line-height:1.7;">אם הדפדפן מזהיר שהאתר לא מאובטח: "מתקדם" ← "המשך לאתר". אחר כך מקלידים שם מלא ולוחצים "כניסה למבחן".</div>
+  <div id="connAlt" style="max-width:900px;"></div>
+  <div style="font-size:12px;color:var(--text2);">לחיצה או Esc לסגירה</div>
+</div>
+<script src="/qrcode.js"></script>
 <div id="helpModal">
  <div class="hp-wrap">
   <div class="hp-top"><h2>❓ איך משתמשים במערכת</h2><button class="hp-btn" style="margin-inline-start:auto;" onclick="closeHelp()">✕ סגור (Esc)</button></div>
@@ -665,9 +682,11 @@ function updateStudentCard(s) {
         <div class="card-name"><div class="dot" id="dot-${s.id}"></div>${esc(s.name)}<span id="app-${s.id}" title="" style="font-size:11px;">${appBadge(s.usingApp)}</span><span id="flag-${s.id}" style="display:none;font-size:11px;"></span></div>
         <div class="card-meta"><span>${esc(s.ip)}</span> · <span id="res-${s.id}">${esc(s.resolution||'-')}</span> · <span id="dur-${s.id}">0s</span></div>
       </div>
-      <button class="action-btn shot-btn" onclick="captureManualShot(${s.id})" title="צלם מסך">📸</button>
-      <button class="action-btn popup-btn" onclick="openPopup(${s.id})"      title="פתח בחלון נפרד">⧉</button>
-      <button class="action-btn kick-btn"  onclick="kickStudent(${s.id})"    title="העף תלמיד">✕</button>
+      <div class="card-actions">
+        <button class="action-btn shot-btn" onclick="captureManualShot(${s.id})" title="צלם מסך">📸</button>
+        <button class="action-btn popup-btn" onclick="openPopup(${s.id})"      title="פתח בחלון נפרד">⧉</button>
+        <button class="action-btn kick-btn"  onclick="kickStudent(${s.id})"    title="העף תלמיד">✕</button>
+      </div>
     </div>`;
   grid.appendChild(card);
 
@@ -1075,30 +1094,110 @@ async function handleBroadcastAnswer(msg) {
   if (pc) { try { await pc.setRemoteDescription(msg.answer); } catch {} }
 }
 
-// ── סליידר גודל מסכי התלמידים (קובע גם כמה מסכים נכנסים בשורה) ──
+// ── גודל מסכי התלמידים: ידני (סליידר) או אוטומטי (ממלא את המקום הפנוי בלי גלילה) ──
 (function () {
   const slider = document.getElementById('sizeSlider'), info = document.getElementById('sizeInfo');
-  const grid = document.getElementById('videoGrid'), DEFAULT = 220;
-  const KEY = 'examGridCardMin';
+  const autoBox = document.getElementById('sizeAuto');
+  const grid = document.getElementById('videoGrid'), area = grid.parentElement, DEFAULT = 220, GAP = 10, MIN_W = 100;
+  const KEY = 'examGridCardMin', AUTO_KEY = 'examGridAuto';
+  let auto = true;
+
   function refreshInfo() {
     const cols = getComputedStyle(grid).gridTemplateColumns.split(' ').filter(Boolean).length;
     info.textContent = cols + ' בשורה';
+    const first = grid.querySelector('.student-card');
+    grid.classList.toggle('narrow', !!first && first.offsetWidth < 250);
   }
+
+  // בוחר את מספר העמודות שנותן את הכרטיסים הגדולים ביותר שעדיין נכנסים כולם במקום הפנוי.
+  // המקום הפנוי משתנה כשהסרגל הצדי (אירועים) נפתח/מתקפל או כשגודל החלון משתנה.
+  function autoLayout() {
+    const cards = grid.querySelectorAll('.student-card').length;
+    const cs = getComputedStyle(area), head = area.querySelector('.grid-head');
+    const W = area.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+    const H = area.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom) - (head ? head.offsetHeight + 10 : 0);
+    if (!cards || W <= 0 || H <= 0) { grid.style.gridTemplateColumns = ''; grid.style.justifyContent = ''; refreshInfo(); return; }
+    const chrome = 44;   // גובה שורת השם + מסגרת (קבוע, כדי שמעבר למצב "כרטיס קטן" לא ישנה את החישוב)
+    let best = { c: 1, w: 0 };
+    for (let c = 1; c <= cards; c++) {
+      const wFit = (W - GAP * (c - 1)) / c;
+      if (c > 1 && wFit < MIN_W) break;
+      const rows = Math.ceil(cards / c);
+      const rowH = (H - GAP * (rows - 1)) / rows;
+      const w = Math.min(wFit, (rowH - chrome) * 16 / 9);
+      if (w > best.w) best = { c, w };
+    }
+    const w = Math.max(MIN_W, Math.floor(best.w));   // לא קטן מדי גם כשיש המון תלמידים (אז מותר לגלול)
+    grid.style.gridTemplateColumns = `repeat(${best.c}, ${w}px)`;
+    grid.style.justifyContent = 'center';
+    refreshInfo();
+  }
+
+  function manualLayout() {
+    grid.style.gridTemplateColumns = ''; grid.style.justifyContent = '';
+    refreshInfo();
+  }
+  function relayout() { auto ? autoLayout() : manualLayout(); }
+
   function apply(v, save) {
     v = Math.min(+slider.max, Math.max(+slider.min, +v || DEFAULT));
     slider.value = v;
     grid.style.setProperty('--card-min', v + 'px');
-    refreshInfo();
+    relayout();
     if (save) { try { localStorage.setItem(KEY, String(v)); } catch {} }
   }
-  let saved = DEFAULT;
-  try { saved = +localStorage.getItem(KEY) || DEFAULT; } catch {}
+  function setAuto(on, save) {
+    auto = !!on; autoBox.checked = auto; slider.disabled = auto;
+    slider.style.opacity = auto ? '.4' : '1';
+    relayout();
+    if (save) { try { localStorage.setItem(AUTO_KEY, auto ? '1' : '0'); } catch {} }
+  }
+
+  let saved = DEFAULT, savedAuto = '1';
+  try { saved = +localStorage.getItem(KEY) || DEFAULT; savedAuto = localStorage.getItem(AUTO_KEY) || '1'; } catch {}
   apply(saved, false);
+  setAuto(savedAuto !== '0', false);
   slider.addEventListener('input', () => apply(slider.value, true));
-  document.getElementById('sizeReset').addEventListener('click', () => apply(DEFAULT, true));
-  if (window.ResizeObserver) new ResizeObserver(refreshInfo).observe(grid);
-  else window.addEventListener('resize', refreshInfo);
+  autoBox.addEventListener('change', () => setAuto(autoBox.checked, true));
+  document.getElementById('sizeReset').addEventListener('click', () => { apply(DEFAULT, true); setAuto(false, true); });
+
+  if (window.ResizeObserver) new ResizeObserver(relayout).observe(area);   // כולל קיפול/פתיחה של סרגל האירועים
+  else window.addEventListener('resize', relayout);
+  new MutationObserver(relayout).observe(grid, { childList: true });         // תלמיד נוסף/הוסר
+  window.addEventListener('transitionend', e => { if (e.target.id === 'sidebar') relayout(); });
 })();
+
+// ── מסך חיבור לתלמידים: קישור גדול + קוד QR מעל כל הגריד ──
+let _connUrls = [], _connIdx = 0;
+function drawConnQr() {
+  const url = _connUrls[_connIdx] || `https://${location.host}/student.html`;
+  document.getElementById('connMain').textContent = url;
+  const box = document.getElementById('connQr');
+  box.textContent = '';
+  try {
+    const qr = qrcode(0, 'M'); qr.addData(url); qr.make();
+    box.innerHTML = qr.createSvgTag({ cellSize: 8, margin: 4, scalable: true });
+    const svg = box.querySelector('svg'); if (svg) { svg.style.width = '100%'; svg.style.height = '100%'; svg.style.display = 'block'; }
+  } catch { box.textContent = 'לא ניתן ליצור קוד QR'; }
+  const alt = document.getElementById('connAlt');
+  alt.textContent = '';
+  if (_connUrls.length > 1) {
+    const t = document.createElement('div'); t.textContent = 'כתובות נוספות (לחץ כדי להציג אותה כקוד QR):'; t.style.cssText = 'font-size:14px;color:var(--text2);margin-bottom:6px;';
+    alt.appendChild(t);
+    _connUrls.forEach((u, i) => {
+      const b = document.createElement('button'); b.className = 'secondary'; b.textContent = u; b.style.cssText = 'direction:ltr;margin:3px;font-family:IBM Plex Mono,monospace;' + (i === _connIdx ? 'border-color:var(--accent);color:var(--accent);' : '');
+      b.onclick = e => { e.stopPropagation(); _connIdx = i; drawConnQr(); };
+      alt.appendChild(b);
+    });
+  }
+}
+function toggleConnect(force) {
+  const ov = document.getElementById('connectOverlay');
+  const show = force === undefined ? ov.style.display !== 'flex' : !!force;
+  if (show) { _connUrls = studentUrls.length ? studentUrls.slice() : [`https://${location.host}/student.html`]; _connIdx = 0; drawConnQr(); }
+  ov.style.display = show ? 'flex' : 'none';
+}
+document.addEventListener('keydown', e => { if (e.key === 'Escape') toggleConnect(false); });
 </script>
 </body>
 </html>
